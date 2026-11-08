@@ -75,12 +75,14 @@ const extra = [
   ["DNS keeper injected into cli.js", "patch-9r-net-keeper.js"],
   ["muse-web direct executor (P5)", "reinstall-muse-executor.js"],
   ["qoduck 1M context + effort", "patch-9r-qoduck.js"],
+  ["qwen-web provider", "patch-9r-qwen-web.js", ["--apply"]],
+  ["kimi-web provider", "patch-9r-kimi-web.js", ["--apply"]],
 ];
 console.log("");
-for (const [label, script] of extra) {
+for (const [label, script, args] of extra) {
   if (!fs.existsSync(path.join(HERE, script))) { console.log(`${"skipped".padEnd(18)} ${label} (${script} not found)`); continue; }
   try {
-    const out = execFileSync(process.execPath, [path.join(HERE, script)], { encoding: "utf8" });
+    const out = execFileSync(process.execPath, [path.join(HERE, script), ...(args || [])], { encoding: "utf8" });
     const verdict = /PATCH/.test(out) ? "patched" : /NO MATCH|not found|ERROR/.test(out) ? "CHECK" : "ok";
     console.log(`${verdict.padEnd(18)} ${label}`);
     if (verdict === "CHECK") console.log(out.trim().split("\n").map((l) => "    " + l).join("\n"));
