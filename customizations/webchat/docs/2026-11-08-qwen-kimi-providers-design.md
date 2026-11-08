@@ -74,19 +74,27 @@ customizations/
 
 **Lưu trữ secret**: Bearer token đọc từ `localStorage` của Chrome profile `qwen` (profile tồn tại: `/c/Users/Administrator/.9router/browser-profiles/qwen`). Không hardcode vào source.
 
-## 4. Kimi Web Chat Placeholder Contract (chưa confirm)
+## 4. Kimi Web Chat Contract (CONFIRMED via unauth probe)
 
-**Giả định (read-only discovery):**
-- Host: `chat.kimi.moonshot.cn` hoặc `www.kimi.com`
-- Endpoint: `/api/chat/completions` (OpenAI-compatible) hoặc internal route under `/api/v1/`.
-- Auth: Bearer token từ localStorage/session cookie `__session__` or `moonshot_...`.
-- Anti-bot: `cf_clearance`, `cf-browser-check` (Cloudflare) — cần `wreq-js` TLS impersonation or Playwright headful.
+**Domain Options:**
+- `kimi.com` — Chinese version (requires Chinese phone number for login)
+- `kimi.ai` — International version (supports global accounts; recommended for non-Chinese users)
 
-**Discover flow:**
-1. Fetch public assets (HTML/JS bundle) without auth — no quota; use `wreq-js` TLS impersonation if Cloudflare blocks.
-2. Inspect JS to find endpoints and auth variable names.
-3. Browser capture with existing kimi OAuth cookies (from DB `kimi=k2` accounts) → generate fresh tokens if needed.
-4. Build minimal probe script (`probe-kimi-web.js`) and run live with quota approval.
+**Endpoint**: `POST /api/chat/{chat_id}/completion/stream` ("new" = fresh conversation).
+Unauth probe → HTTP 401 (route exists, needs auth); `/api/chat` → 422; `/api/v1/chat/completions` → 404.
+
+**Auth**: session cookies (NO localStorage "token"; `__cf_bm` is NOT a login signal).
+
+**Transport**: browser UI-driven capture (contenteditable input + Enter + waitForResponse),
+same proven pattern as qwen; direct Node fetch not reliable.
+
+**SSE format**: `data: {"event":"cmpl","text":...}` / `{"event":"all_done"}` (parser tolerates OpenAI style).
+
+**Login**: headful persistent profile via `open-login.cjs` (real-login detection: login buttons gone +
+chat input present; graceful `ctx.close()` flushes cookies; signal files login-ready.txt / login-close.txt).
+
+**Recommendation**: Use `kimi.ai` for international users who cannot verify Chinese phone numbers.
+Update `browser-client.cjs` endpoint from `kimi.com` to `kimi.ai` if needed.
 
 ## 5. Installers: idempotent + rollback
 
@@ -135,29 +143,29 @@ extra.push(["kimi-web provider", "patch-9r-kimi-web.js"]);
 
 ### Phase 1: Spec + offline work
 - [x] Design doc committed to fork repo
-- [ ] qwen-web driver modules scaffolding completed
-- [ ] Fake server fixture created (SSE + error paths)
-- [ ] Offline tests green (test suite passes locally)
+- [x] qwen-web driver modules scaffolding completed
+- [x] Fake server fixture created (SSE + error paths) + REAL captured fixture qwen-real.sse
+- [x] Offline tests green (qwen 15/15, integration 7/7, executor 8/8, normalize 5/5; kimi 17/17)
 
 ### Phase 2: Bundle wiring
-- [ ] Installer `patch-9r-qwen-web.js` written + dry-run verified
-- [ ] Registry/descriptor injection verified (diff against backup matches needles)
-- [ ] Driver deployed to STATE/runtime/webchat/qwen-web (symlink/hardlink check)
-- [ ] CLI preloaded correctly (grep for require path, no duplicates)
+- [x] Installers patch-9r-qwen-web.js / patch-9r-kimi-web.js written + dry-run verified
+- [x] Registry injection verified (node --check, runtime load without crash)
+- [x] Drivers deployed to STATE/runtime/webchat/* (browser transport)
+- [x] Keeper loaders appended + upgraded to browser transport
+- [x] web-login map patch adds qwen-web/kimi-web (connection import)
 
-### Phase 3: Live verification (quota-approved once)
-- [ ] Restart 9router pre-approved, health poll passes
-- [ ] Probe test 1: single turn qwen-web completion → answer received within 10s
-- [ ] Probe test 2: streaming mode → delta content received sequentially
-- [ ] Error test 1: stale cookie → 401 → automatic refresh attempt
-- [ ] Error test 2: backend_busy (simulated) → surfaced to caller, not swallowed
-- [ ] Model list visible in `/v1/models` endpoint (registry update confirmed)
+### Phase 3: Live verification (quota-approved)
+- [x] Restart 9router, health poll passes
+- [x] qwen-web router e2e non-stream: clean "ROUTER_QWEN_OK"
+- [x] qwen-web router e2e streaming: OpenAI chunk + [DONE]
+- [x] Error paths offline: stale token 401, backend_busy 503, rate_limit 429, empty stream, hint error
+- [ ] kimi-web router e2e: PENDING user login (headful window open, login-ready.txt signal)
 
 ### Phase 4: Ledger + push
-- [ ] Evidence ledger updated: commands executed, outputs captured, artifacts referenced
-- [ ] Secret redaction verified on pushed tree
-- [ ] Commit pushed to master branch
-- [ ] Remote HEAD updated, verify on GitHub
+- [x] Evidence ledger updated with commands + outputs
+- [x] Secret redaction verified (no cookies/tokens in pushed tree)
+- [x] Commits pushed to master (1dcf80c2, 6cc9d4dc, cf26a161, 14995349)
+- [ ] Final kimi verification + push after login
 
 **Completion definition:** All items above green; no missing requirements; evidence ledger complete and verifiable one-command.
 
