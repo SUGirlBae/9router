@@ -77,6 +77,7 @@ const extra = [
   ["qoduck 1M context + effort", "patch-9r-qoduck.js"],
   ["qwen-web provider", "patch-9r-qwen-web.js", ["--apply"]],
   ["kimi-web provider", "patch-9r-kimi-web.js", ["--apply"]],
+  ["web-login map qwen/kimi", "patch-9r-weblogin-map.js", ["--apply"]],
 ];
 console.log("");
 for (const [label, script, args] of extra) {

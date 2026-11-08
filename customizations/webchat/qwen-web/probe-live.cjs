@@ -10,6 +10,7 @@ const { parseSSEChunk } = require("./sse.cjs");
   log("start");
   const r = await chatViaBrowser({ model: "qwen3.7-plus", messages: [{ role: "user", content: "Hi" }], stream: true }, 180000);
   log("HTTP " + r.status + " CT=" + r.contentType);
+  fs.writeFileSync(__dirname + "/raw-sse.txt", r.text || "");
   if (r.contentType.includes("application/json")) { log("JSON " + r.text.slice(0, 300)); return; }
   const evs = parseSSEChunk(r.text);
   let out = ""; for (const e of evs) if (e.type === "delta") out += e.content;

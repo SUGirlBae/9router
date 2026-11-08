@@ -41,10 +41,18 @@ One-command claims with observed output. Approach A (in-bundle installers).
 
 ## Known gaps (not yet perfect)
 
-1. /v1/models catalog does not list qwen-web/kimi-web (descriptor insertion deferred to avoid corrupting existing providers). Registry entry makes them callable but invisible in model picker.
-2. kimi-web live unverified (no session profile).
-3. qwen-web live completion pending browser-transport probe result.
-4. Router-level end-to-end (model id qwen-web/... through /v1/chat/completions) needs a provider connection row with web credentials; not yet created.
+1. /v1/models catalog does not list qwen-web/kimi-web (descriptor insertion deferred to avoid corrupting existing providers). Registry entry + web-login connection make them callable; model id `<provider>/<model>` routes correctly even absent from picker.
+2. kimi-web live verification PENDING user login: automation profile was logged-out; headful open-login.cjs window open with real-login detection (login-ready.txt) + graceful close (login-close.txt). Once logged in: close gracefully, create connection, restart, probe.
+3. qwen-web live completion VERIFIED COMPLETE (see below).
+4. Router-level e2e VERIFIED for qwen-web: connection created via web-login map patch; non-stream returns clean "ROUTER_QWEN_OK"; streaming returns OpenAI chat.completion.chunk + [DONE].
+
+## FINAL verified results (qwen-web)
+
+| Probe | Result |
+|---|---|
+| router non-stream | HTTP 200, content "ROUTER_QWEN_OK", CLEAN=true (no raw SSE) |
+| router streaming | HTTP 200, 1 chat.completion.chunk with "QWEN_OK_DONE" + [DONE] (router appends a 2nd [DONE]; harmless) |
+| normalizeSSE vs real fixture | 5/5: extracts phase=answer text, excludes thinking_summary, emits [DONE], no response.created leakage |
 
 ## Bugs found & fixed during testing
 

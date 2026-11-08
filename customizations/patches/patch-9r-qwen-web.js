@@ -143,7 +143,17 @@ const loaderBlock = [
 let keeperResult;
 if (fs.existsSync(KEEPER)) {
   const keeperText = fs.readFileSync(KEEPER, "utf8");
-  if (keeperText.includes(KEEPER_MARK)) keeperResult = "already applied";
+  const OLD_BIND = '{ id: "qwen-web", baseUrl: "https://chat.qwen.ai" }';
+  const NEW_BIND = '{ id: "qwen-web", baseUrl: "https://chat.qwen.ai", transport: "browser", home: require("node:path").join(__dirname, "webchat", "qwen-web") }';
+  if (keeperText.includes(KEEPER_MARK) && keeperText.includes(OLD_BIND)) {
+    // Upgrade an older loader binding to browser transport (qwen direct fetch hits anti-bot).
+    if (APPLY) {
+      fs.writeFileSync(`${KEEPER}.pre-qwenweb.bak`, keeperText);
+      fs.writeFileSync(KEEPER, keeperText.replace(OLD_BIND, NEW_BIND));
+      checkSyntax(KEEPER);
+      keeperResult = "upgraded binding to browser transport + node --check ok";
+    } else keeperResult = "would upgrade binding to browser transport";
+  } else if (keeperText.includes(KEEPER_MARK)) keeperResult = "already applied";
   else if (APPLY) {
     fs.writeFileSync(`${KEEPER}.pre-qwenweb.bak`, keeperText);
     fs.writeFileSync(KEEPER, keeperText + "\n" + loaderBlock + "\n");

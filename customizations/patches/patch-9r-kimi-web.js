@@ -33,6 +33,7 @@ const DRIVER_FILES = [
   "kimi-web/sse.cjs",
   "kimi-web/error.cjs",
   "kimi-web/executor.cjs",
+  "kimi-web/browser-client.cjs",
 ];
 
 const log = [];
@@ -120,7 +121,7 @@ const loaderBlock = [
   "    if (require(\"node:fs\").existsSync(require(\"node:path\").join(kiHome, \"client.cjs\"))) {",
   "      process.env.KIMI_HOME = kiHome;",
   "      process.env.KIMI_RUNTIME = __dirname;",
-  "      globalThis.__9rKimiExec = (Base) => require(require(\"node:path\").join(kiHome, \"executor.cjs\")).createWebchatExecutor(Base, { id: \"kimi-web\", baseUrl: \"https://www.kimi.com\" });",
+  "      globalThis.__9rKimiExec = (Base) => require(require(\"node:path\").join(kiHome, \"executor.cjs\")).createWebchatExecutor(Base, { id: \"kimi-web\", baseUrl: \"https://www.kimi.com\", transport: \"browser\", home: kiHome });",
   "    }",
   "  }",
   "} catch (err) {",

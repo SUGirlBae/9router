@@ -1,1 +1,4 @@
 start
+HTTP 200 CT=text/event-stream; charset=utf-8
+DELTAS=10 OUT="Hello! How can I help you today?"
+DONE
