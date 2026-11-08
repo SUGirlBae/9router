@@ -15,21 +15,30 @@ const DEFAULT_PROFILE = "/c/Users/Administrator/.9router/browser-profiles/qwen";
 
 async function getBearerToken(profilePath = DEFAULT_PROFILE) {
   const playwright = loadPlaywright();
-  const ctx = await playwright.chromium.launchPersistentContext(profilePath, {
-    headless: true,
-    args: ["--disable-blink-features=AutomationControlled"],
-  });
+  let ctx;
   try {
-    const page = ctx.pages()[0] || (await ctx.newPage());
-    await page.goto("https://chat.qwen.ai/", { waitUntil: "domcontentloaded", timeout: 60000 });
-    const token = await page.evaluate(() => localStorage.getItem("token"));
-    if (!token || typeof token !== "string" || token.trim().length < 20) {
-      throw new Error("No valid token found in localStorage");
-    }
-    return token;
-  } finally {
-    await ctx.close();
+    ctx = await playwright.chromium.launchPersistentContext(profilePath, {
+      headless: true,
+      executablePath: process.env.CHROME_PATH || "C:/Program Files/Google/Chrome/Application/chrome.exe",
+      args: ["--disable-blink-features=AutomationControlled"],
+    });
+  } catch(e){ throw new Error("Failed to launch browser: "+e.message); }
+  if(!ctx.pages().length){ await ctx.newPage(); }
+  const page = ctx.pages()[0];
+  await page.goto("https://chat.qwen.ai/", { waitUntil: "domcontentloaded", timeout: 60000 });
+  await page.waitForTimeout(10000); // extra hydration time
+  let token = null;
+  try{
+    await page.waitForFunction(()=>{const t=localStorage.getItem("token");return typeof t==="string";},{timeout:30000});
+    token = await page.evaluate(()=>localStorage.getItem("token"));
+  }catch(e){ console.warn("waitForFunction failed:",e.message); }
+  if(!validateToken(token)){
+    console.warn("Token state:",{exists:!!token, type:typeof token,len:token?token.length:0, val:token&&token.slice(0,40)});
+    throw new Error("No valid token found in localStorage");
   }
+  console.log("Token loaded successfully len=",token.length);
+  await ctx.close();
+  return token;
 }
 
 async function getCookieJar(profilePath = DEFAULT_PROFILE) {

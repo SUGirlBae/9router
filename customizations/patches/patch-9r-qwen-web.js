@@ -43,6 +43,7 @@ const DRIVER_FILES = [
   "qwen-web/sse.cjs",
   "qwen-web/error.cjs",
   "qwen-web/executor.cjs",
+  "qwen-web/browser-client.cjs",
 ];
 
 const log = [];
@@ -129,8 +130,9 @@ const loaderBlock = [
   "    const qwHome = process.env.QWEN_HOME || require(\"node:path\").join(__dirname, \"webchat\", \"qwen-web\");",
   "    if (require(\"node:fs\").existsSync(require(\"node:path\").join(qwHome, \"client.cjs\"))) {",
   "      process.env.QWEN_HOME = qwHome;",
+  "      process.env.QWEN_TRANSPORT = \"browser\";",
   "      process.env.QWEN_RUNTIME = __dirname;",
-  "      globalThis.__9rQwenExec = (Base) => require(require(\"node:path\").join(qwHome, \"executor.cjs\")).createWebchatExecutor(Base, { id: \"qwen-web\", baseUrl: \"https://chat.qwen.ai\" });",
+  "      globalThis.__9rQwenExec = (Base) => require(require(\"node:path\").join(qwHome, \"executor.cjs\")).createWebchatExecutor(Base, { id: \"qwen-web\", baseUrl: \"https://chat.qwen.ai\", transport: process.env.QWEN_TRANSPORT || \"direct\", home: qwHome });",
   "    }",
   "  }",
   "} catch (err) {",

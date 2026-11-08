@@ -45,11 +45,11 @@ function buildRequestBody({ model, messages, stream = true, chatId = null }) {
   return body;
 }
 
-async function chatCompletion({ model, messages, stream = true, chatId = null, timeoutMs = 30000 }) {
-  const token = await getToken();
+async function chatCompletion({ model, messages, stream = true, chatId = null, timeoutMs = 30000, token = null }) {
+  const tok = token || (await getToken());
   const headers = {
     ...generateAntiBotHeaders(),
-    authorization: `Bearer ${token}`,
+    authorization: `Bearer ${tok}`,
   };
   const body = buildRequestBody({ model, messages, stream, chatId });
   const base = process.env.QWEN_BASE_URL || "https://chat.qwen.ai";

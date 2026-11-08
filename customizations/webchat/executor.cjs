@@ -53,6 +53,8 @@ function createWebchatExecutor(Base, cfg) {
       // Set explicitly: the real Base may store these differently; fallback Parent stores options only.
       this.provider = id;
       this.baseUrl = baseUrl;
+      this.transport = cfg.transport || "direct";
+      this.home = cfg.home || null;
     }
     
     async testConnection(token) {
@@ -78,6 +80,18 @@ function createWebchatExecutor(Base, cfg) {
         messages: normalizedMessages,
         stream: stream !== false,
       };
+
+      // Browser transport: run fetch inside the logged-in page (genuine cookies/TLS),
+      // required for qwen-web because direct Node fetch hits Alibaba anti-bot.
+      if (this.transport === "browser" && this.home) {
+        const { chatViaBrowser } = require(require("node:path").join(this.home, "browser-client.cjs"));
+        const r = await chatViaBrowser({ model: requestBody.model, messages: normalizedMessages, stream: requestBody.stream });
+        if (r.contentType.includes("application/json")) {
+          return { response: new Response(r.text, { status: r.status || 502, headers: { "Content-Type": "application/json" } }), url: this.baseUrl, headers: {}, transformedBody: r.text };
+        }
+        const normalized = normalizeSSE(r.text, id);
+        return { response: normalized, url: this.baseUrl, headers: { "content-type": "text/event-stream" }, transformedBody: r.text };
+      }
       
       // Upstream request builder based on provider id
       let upstreamUrl = `${this.baseUrl}/api/v2/chat/completions`;
