@@ -657,7 +657,8 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
     mitmLastStartTime = Date.now();
   }
 
-  // Set NODE_EXTRA_CA_CERTS so Node-based GUI apps (Electron/AG language_server) trust MITM cert
+  // On Mac launchctl is process-isolated; on Windows we avoid permanent setx
+  // to prevent corrupting the user's global Windows environment across reboots/crashes.
   if (IS_MAC) {
     const rootCAPath = path.join(MITM_DIR, "rootCA.crt");
     if (fs.existsSync(rootCAPath)) {
@@ -667,13 +668,8 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
       });
     }
   } else if (IS_WIN) {
-    const rootCAPath = path.join(MITM_DIR, "rootCA.crt");
-    if (fs.existsSync(rootCAPath)) {
-      exec(`setx NODE_EXTRA_CA_CERTS "${rootCAPath}"`, { windowsHide: true }, (e) => {
-        if (e) log(`[setx] Failed to set NODE_EXTRA_CA_CERTS: ${e.message}`);
-        else log(`[setx] NODE_EXTRA_CA_CERTS set for current user`);
-      });
-    }
+    // Clean any legacy persistent setx variable to keep Windows OS pristine
+    exec(`reg delete HKCU\\Environment /F /V NODE_EXTRA_CA_CERTS`, { windowsHide: true }, () => {});
   }
 
   let startError = null;

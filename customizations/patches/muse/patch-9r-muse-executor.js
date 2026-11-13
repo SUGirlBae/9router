@@ -200,6 +200,15 @@ function descriptorFiles() {
   }
 }
 
+// 5. Host cookie fix for muse-web fallback Playwright runner
+const COOKIE_NEEDLE = 's(m).map(({name:a,value:b})=>({name:a,value:b,domain:".muse.ai",path:"/",secure:!0,httpOnly:!1,sameSite:"Lax",expires:-1}))';
+const COOKIE_REPLACEMENT = 's(m).map(({name:a,value:b})=>a.startsWith("__Host-")?{name:a,value:b,url:"https://muse.ai/",secure:!0,httpOnly:!1,sameSite:"Lax"}:{name:a,value:b,domain:".muse.ai",path:"/",secure:!0,httpOnly:!1,sameSite:"Lax"})';
+try {
+  note("5330.js __Host- cookie fix", patchFile(EXECUTOR_FILE, COOKIE_NEEDLE, COOKIE_REPLACEMENT, 'url:"https://muse.ai/"'));
+} catch (err) {
+  note("5330.js __Host- cookie fix", `REFUSED: ${err.message}`);
+}
+
 console.log(log.join("\n"));
 console.log(
   APPLY

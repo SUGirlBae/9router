@@ -13,7 +13,9 @@ const path = require("path");
 
 const PKG = "C:/Users/Administrator/AppData/Roaming/npm/node_modules/9router";
 const CLI = process.env.NINE_R_CLI_PATH || path.join(PKG, "cli.js");   // override lets the patch be rehearsed on a copy
-const KEEPER_SRC = path.join(__dirname, "9r-net-keeper.js");
+const KEEPER_SRC = fs.existsSync(path.join(__dirname, "9r-net-keeper.js"))
+  ? path.join(__dirname, "9r-net-keeper.js")
+  : path.join(__dirname, "..", "runtime", "9r-net-keeper.js");
 const KEEPER_DST = (process.env.NINE_R_KEEPER_DST || path.join(process.env.APPDATA || "", "9router", "runtime", "9r-net-keeper.js"))
   .replace(/\\/g, "/");   // forward slashes: this string is injected into JS source, and "\r" in
                           // C:\Users\...\runtime would be parsed as a carriage return
@@ -21,8 +23,20 @@ const BACKUP = CLI + ".pre-netkeeper.bak";
 const DRY = process.argv.includes("--dry-run");
 
 const SPAWNS = [
-  { find: `["--dns-result-order=ipv4first", "--max-old-space-size=6144", serverPath]`, label: "server child" },
-  { find: `["--dns-result-order=ipv4first", __filename, "--tray", "--skip-update", "-p", port.toString()]`, label: "tray relaunch" },
+  {
+    patterns: [
+      `["--dns-result-order=ipv4first", "--max-old-space-size=6144", serverPath]`,
+      `["--max-old-space-size=6144", serverPath]`,
+    ],
+    label: "server child",
+  },
+  {
+    patterns: [
+      `["--dns-result-order=ipv4first", __filename, "--tray", "--skip-update", "-p", port.toString()]`,
+      `[__filename, "--tray", "--skip-update", "-p", port.toString()]`,
+    ],
+    label: "tray relaunch",
+  },
 ];
 
 function main() {
@@ -33,9 +47,11 @@ function main() {
   const inject = (find) => `["--require", "${KEEPER_DST}", ` + find.slice(1);
 
   for (const s of SPAWNS) {
-    if (src.includes(inject(s.find))) { plan.push(`OK    ${s.label}: already injected`); continue; }
-    if (!src.includes(s.find)) { plan.push(`SKIP  ${s.label}: pattern not present (9router version changed — re-check by hand)`); continue; }
-    src = src.replace(s.find, inject(s.find));
+    const already = s.patterns.some((p) => src.includes(inject(p)));
+    if (already) { plan.push(`OK    ${s.label}: already injected`); continue; }
+    const match = s.patterns.find((p) => src.includes(p));
+    if (!match) { plan.push(`SKIP  ${s.label}: pattern not present (9router version changed — re-check by hand)`); continue; }
+    src = src.replace(match, inject(match));
     plan.push(`PATCH ${s.label}: add --require keeper`);
   }
 

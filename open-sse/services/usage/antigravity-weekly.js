@@ -26,7 +26,14 @@ export function _clearWeeklyCache() {
 }
 
 // — Group-name and window to stable key mapping ——————————————————————
+// Order matters: more specific family patterns (e.g. Gemini 4 Argon) must
+// precede the broader /gemini/i matcher so they do not get skipped.
 const GROUP_CONFIGS = [
+  {
+    pattern: /argon/i,
+    weekly: { key: "gemini_argon_weekly", displayName: "Gemini 4 Argon (Weekly)" },
+    session: { key: "gemini_argon_session", displayName: "Gemini 4 Argon (5h)" },
+  },
   {
     pattern: /gemini/i,
     weekly: { key: "gemini_weekly", displayName: "Gemini (Weekly)" },
@@ -132,8 +139,6 @@ export async function fetchAntigravityWeeklyQuota(accessToken, projectId, proxyO
           "Authorization": `Bearer ${accessToken}`,
           "User-Agent": WEEKLY_CONFIG.userAgent,
           "Content-Type": "application/json",
-          "X-Client-Name": "antigravity",
-          "X-Client-Version": ANTIGRAVITY_IDE_VERSION,
         },
         body: JSON.stringify({
           ...(projectId ? { project: projectId } : {}),

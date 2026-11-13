@@ -1,0 +1,36 @@
+export default {
+  id: "qwen-web",
+  priority: 220,
+  alias: "qwen-web",
+  aliases: [
+    "qw-web",
+  ],
+  uiAlias: "qwen-web",
+  display: {
+    name: "Qwen Web",
+    icon: "auto_awesome",
+    color: "#615ced",
+    textIcon: "QW",
+    website: "https://chat.qwen.ai",
+  },
+  category: "webCookie",
+  authType: "cookie",
+  authHint: "Login via browser or paste token from chat.qwen.ai localStorage (DevTools → Application → Local Storage)",
+  transport: {
+    baseUrl: "https://chat.qwen.ai",
+    format: "openai",
+    authType: "cookie",
+  },
+  models: [
+    { id: "qwen3.7-plus", name: "Qwen 3.7 Plus", supportsReasoning: true },
+    { id: "qwen3.7-plus-think", name: "Qwen 3.7 Plus Think", supportsReasoning: true },
+    { id: "qwen3.7-plus-search", name: "Qwen 3.7 Plus Search", supportsReasoning: true },
+    { id: "qwen3.7-plus-think-search", name: "Qwen 3.7 Plus Think+Search", supportsReasoning: true },
+    { id: "qwen3.7-max", name: "Qwen 3.7 Max", supportsReasoning: true },
+    { id: "qwen3.7-72b", name: "Qwen 3.7 72B", supportsReasoning: true },
+    { id: "qwen3.7-coder", name: "Qwen 3.7 Coder", supportsReasoning: true },
+    { id: "qwen-max", name: "Qwen Max", supportsReasoning: true },
+    { id: "qwen-plus", name: "Qwen Plus", supportsReasoning: true },
+    { id: "qwen-turbo", name: "Qwen Turbo" },
+  ],
+};

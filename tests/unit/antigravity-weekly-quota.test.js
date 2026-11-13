@@ -6,6 +6,7 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
 }));
 
 import { proxyAwareFetch } from "../../open-sse/utils/proxyFetch.js";
+import { ANTIGRAVITY_IDE_USER_AGENT } from "../../open-sse/providers/shared.js";
 import {
   parseWeeklyQuotaSummary,
   fetchAntigravityWeeklyQuota,
@@ -276,9 +277,8 @@ describe("fetchAntigravityWeeklyQuota", () => {
         method: "POST",
         headers: expect.objectContaining({
           "Authorization": "Bearer token",
-          "User-Agent": "antigravity/hub/2.24.0 darwin/arm64",
+          "User-Agent": ANTIGRAVITY_IDE_USER_AGENT,
           "Content-Type": "application/json",
-          "X-Client-Name": "antigravity",
         }),
         body: JSON.stringify({ project: "project-1" }),
       }),

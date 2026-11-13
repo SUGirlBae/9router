@@ -42,6 +42,13 @@ function normalizeProxyPoolUpdate(body = {}) {
     updates.type = validTypes.includes(body?.type) ? body.type : "http";
   }
 
+  if ((!updates.type || updates.type === "http") && updates.proxyUrl) {
+    if (/\.netlify\.app|\/\.netlify\/functions\//i.test(updates.proxyUrl)) updates.type = "netlify";
+    else if (/\.workers\.dev/i.test(updates.proxyUrl)) updates.type = "cloudflare";
+    else if (/\.vercel\.app/i.test(updates.proxyUrl)) updates.type = "vercel";
+    else if (/\.deno\.(net|dev)/i.test(updates.proxyUrl)) updates.type = "deno";
+  }
+
   return { updates };
 }
 

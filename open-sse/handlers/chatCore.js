@@ -20,6 +20,7 @@ import { handleForcedSSEToJson } from "./chatCore/sseToJsonHandler.js";
 import { handleNonStreamingResponse } from "./chatCore/nonStreamingHandler.js";
 import { handleStreamingResponse, buildOnStreamComplete } from "./chatCore/streamingHandler.js";
 import { detectClientTool, isNativePassthrough } from "../utils/clientDetector.js";
+import { sanitizeIngressHeaders } from "../utils/ingressHeaderSanitizer.js";
 import { dedupeTools } from "../utils/toolDeduper.js";
 import { takeRenamedToolNames } from "../utils/opencodeFingerprint.js";
 import { injectCaveman } from "../rtk/caveman.js";
@@ -177,8 +178,9 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const clientTool = detectClientTool(clientRawRequest?.headers || {}, body);
   const passthrough = isNativePassthrough(clientTool, provider);
 
-  // Expose raw client headers to translators/executors for session-id resolution
-  if (credentials) credentials.rawHeaders = clientRawRequest?.headers || {};
+  // Expose sanitized client headers to translators/executors for session-id resolution
+  // while stripping upstream proxy/tunnel/hop/9router trace headers sent by port 20128.
+  if (credentials) credentials.rawHeaders = sanitizeIngressHeaders(clientRawRequest?.headers || {});
 
   // Auto-strip media blocks the model can't read (vision/audio/pdf) before translation.
   if (!passthrough) {
@@ -448,7 +450,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       // refreshWithRetry's 2nd/3rd attempt reuses the already-consumed RT →
       // invalid_grant → auth_failed retryable=false.
       const newCredentials = await refreshWithRetry(async () => {
-        const result = await executor.refreshCredentials(credentials, log);
+        const result = await executor.refreshCredentials(credentials, log, proxyOptions);
         if (result?.refreshToken && result.refreshToken !== credentials.refreshToken) {
           if (result.accessToken) credentials.accessToken = result.accessToken;
           credentials.refreshToken = result.refreshToken;

@@ -13,7 +13,7 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { translate } from "@/i18n/runtime";
 import { fetchSuggestedModels } from "@/shared/utils/providerModelsFetcher";
-import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
+import { applyQoderModelNames, getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
 import ModelRow from "./ModelRow";
 import PassthroughModelsSection from "./PassthroughModelsSection";
 import CompatibleModelsSection from "./CompatibleModelsSection";
@@ -33,6 +33,11 @@ const ONE_BY_ONE_DELAY_MS = 1000;
 
 const MCODE_LEASE_PROVIDERS = new Set(["minimax-code", "minimax-code-global"]);
 
+// Providers whose registry list is only an offline fallback: the dashboard
+// renders the live per-connection catalog from GET /api/providers/[id]/models
+// when one resolves, and falls back to the static rows otherwise.
+const LIVE_MODEL_CATALOG_PROVIDERS = new Set(["cursor", "zed", "claude", "commandcode"]);
+
 const AUTO_PING_SETTINGS_KEYS = {
   claude: "claudeAutoPing",
   codex: "codexAutoPing",
@@ -50,7 +55,11 @@ export default function ProviderDetailPage() {
   const [connections, setConnections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [providerNode, setProviderNode] = useState(null);
-  const [proxyPools, setProxyPools] = useState([]);
+  const [rawProxyPools, setProxyPools] = useState([]);
+  const proxyPools = rawProxyPools.map((pool) => ({
+    ...pool,
+    providerBoundCount: connections.filter((c) => (c.providerSpecificData?.proxyPoolId || null) === pool.id).length,
+  }));
   const [showOAuthModal, setShowOAuthModal] = useState(false);
   const [showXiaomiMimoModal, setShowXiaomiMimoModal] = useState(false);
   const [showIFlowCookieModal, setShowIFlowCookieModal] = useState(false);
@@ -91,6 +100,7 @@ export default function ProviderDetailPage() {
   const [oneByOneResults, setOneByOneResults] = useState({});
   const [oneByOneSummary, setOneByOneSummary] = useState(null);
   const stopOneByOneRef = useRef(false);
+  const [importingProviderModels, setImportingProviderModels] = useState(false);
   const [importingQoderModels, setImportingQoderModels] = useState(false);
   const [importingClineModels, setImportingClineModels] = useState(false);
   const { copied, copy } = useCopyToClipboard();
@@ -163,9 +173,9 @@ export default function ProviderDetailPage() {
   const supportsApiKeyAuth = !!APIKEY_PROVIDERS[providerId] || authModes.includes("apikey");
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
   const staticModels = getModelsByProviderId(providerId);
-  const models = (providerId === "cursor" || providerId === "zed") && liveModels.length > 0
+  const models = LIVE_MODEL_CATALOG_PROVIDERS.has(providerId) && liveModels.length > 0
     ? liveModels
-    : staticModels;
+    : applyQoderModelNames(staticModels, customModels, getProviderAlias(providerId));
   const providerAlias = getProviderAlias(providerId);
   
   const isOpenAICompatible = isOpenAICompatibleProvider(providerId);
@@ -486,7 +496,7 @@ export default function ProviderDetailPage() {
   // the provider id or connection list changes — no polling, no loop.
   // Cursor path is statement-identical to before; zed adds error surfacing.
   useEffect(() => {
-    const isLiveCatalog = providerId === "cursor" || providerId === "zed";
+    const isLiveCatalog = LIVE_MODEL_CATALOG_PROVIDERS.has(providerId);
     if (!isLiveCatalog) {
       setLiveModels([]);
       return;
@@ -598,16 +608,16 @@ export default function ProviderDetailPage() {
     }
   };
 
-  // Fetch Qoder model list and automatically add to available models
-  const handleImportQoderModels = async () => {
-    if (importingQoderModels) return;
+  // Fetch available models from provider and automatically add to customModels
+  const handleImportProviderModels = async () => {
+    if (importingProviderModels) return;
     const activeConnection = connections.find((conn) => conn.isActive !== false);
     if (!activeConnection) {
-      alert(translate("Please add an active Qoder connection first"));
+      alert(translate("Please add an active connection first"));
       return;
     }
 
-    setImportingQoderModels(true);
+    setImportingProviderModels(true);
     try {
       const res = await fetch(`/api/providers/${activeConnection.id}/models`);
       const data = await res.json();
@@ -621,84 +631,63 @@ export default function ProviderDetailPage() {
         return;
       }
 
+      if (providerId === "qoder" || providerId === "qoder-cn") {
+        for (const model of models) {
+          const id = model.id?.replace(/^(qoder-cn|qoder)\//, "");
+          if (!id) continue;
+          const saved = await fetch("/api/models/custom", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ providerAlias: providerStorageAlias, id, type: "llm", name: model.name || id }),
+          });
+          if (!saved.ok) {
+            const error = await saved.json();
+            throw new Error(error.error || "Failed to save model");
+          }
+        }
+        await fetchCustomModels();
+        window.dispatchEvent(new CustomEvent("customModelChanged"));
+        alert(translate("Successfully updated") + ` ${models.length} ` + translate("models"));
+        return;
+      }
+
       let importedCount = 0;
+      const prefixRegex = new RegExp(`^(${providerId}|${providerStorageAlias}|qoder|qoder-cn)\\/(.*)$`, "i");
       for (const model of models) {
-        const modelId = model.id || model.name;
+        let modelId = model.id || model.name;
         if (!modelId) continue;
-        
-        // Qoder model ID format may be "qoder/auto", "qoder-cn/auto" or "auto",
-        // need to remove the provider prefix before storing.
-        const cleanModelId = modelId.replace(/^(qoder-cn|qoder)\//, "");
-        const alreadyExists = customModels.some(
-          (entry) => entry.providerAlias === providerStorageAlias && entry.id === cleanModelId && (entry.kind || entry.type || "llm") === "llm"
-        ) || Object.values(modelAliases).includes(`${providerStorageAlias}/${cleanModelId}`);
-        if (alreadyExists) {
-          continue;
+
+        const match = prefixRegex.exec(modelId);
+        if (match) {
+          modelId = match[2];
         }
 
-        await handleAddCustomModel(cleanModelId, "llm", providerStorageAlias);
-        importedCount += 1;
-      }
-      
-      if (importedCount === 0) {
-        alert(translate("All models already exist, no new models added"));
-      } else {
-        alert(translate("Successfully added") + ` ${importedCount} ` + translate("models"));
-      }
-    } catch (error) {
-      console.log("Error importing Qoder models:", error);
-      alert(translate("Error fetching models") + ": " + error.message);
-    } finally {
-      setImportingQoderModels(false);
-    }
-  };
-  // Fetch the live Cline /models catalog and add every model not yet present.
-  // Cline and ClinePass share the same catalog endpoint (api.cline.bot/api/v1/models).
-  const handleImportClineModels = async () => {
-    if (importingClineModels) return;
-    const activeConnection = connections.find((conn) => conn.isActive !== false);
-    if (!activeConnection) {
-      alert(translate("Please add an active Cline connection first"));
-      return;
-    }
-    setImportingClineModels(true);
-    try {
-      const res = await fetch(`/api/providers/${activeConnection.id}/models`);
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || translate("Failed to fetch models"));
-        return;
-      }
-      const models = data.models || [];
-      if (models.length === 0) {
-        alert(translate("No models returned"));
-        return;
-      }
-      let importedCount = 0;
-      for (const model of models) {
-        const modelId = model.id || model.name;
-        if (!modelId) continue;
+        const modelKind = model.kind || model.type || "llm";
         const alreadyExists = customModels.some(
-          (entry) => entry.providerAlias === providerStorageAlias && entry.id === modelId && (entry.kind || entry.type || "llm") === "llm"
+          (entry) => entry.providerAlias === providerStorageAlias && entry.id === modelId && (entry.kind || entry.type || "llm") === modelKind
         ) || Object.values(modelAliases).includes(`${providerStorageAlias}/${modelId}`);
         if (alreadyExists) {
           continue;
         }
-        await handleAddCustomModel(modelId, "llm", providerStorageAlias);
+
+        await handleAddCustomModel(modelId, modelKind, providerStorageAlias);
         importedCount += 1;
       }
+
       if (importedCount === 0) {
         alert(translate("All models already exist, no new models added"));
       } else {
         alert(translate("Successfully added") + ` ${importedCount} ` + translate("models"));
       }
     } catch (error) {
-      console.log("Error importing Cline models:", error);
+      console.log("Error importing provider models:", error);
       alert(translate("Error fetching models") + ": " + error.message);
     } finally {
-      setImportingClineModels(false);
+      setImportingProviderModels(false);
     }
   };
+  const handleImportQoderModels = handleImportProviderModels;
+  const handleImportClineModels = handleImportProviderModels;
 
   const handleRunOneByOneTest = async () => {
     if (oneByOneRunning || connections.length === 0) return;
@@ -1125,10 +1114,20 @@ export default function ProviderDetailPage() {
               className="flex items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span className="material-symbols-outlined text-text-muted text-[18px]">lan</span>
-              <span className="truncate text-sm text-text-main">{pool.name}</span>
+              <span className="flex-1 truncate text-sm text-text-main">{pool.name}</span>
               {pool.isActive !== true && (
                 <span className="text-[10px] text-text-muted">(inactive)</span>
               )}
+              <span
+                className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-mono ${
+                  (pool.providerBoundCount || 0) > 0
+                    ? "bg-primary/15 text-primary font-semibold"
+                    : "bg-black/5 dark:bg-white/10 text-text-muted"
+                }`}
+                title={`Đã gán cho ${pool.providerBoundCount || 0} tài khoản trong provider này`}
+              >
+                {pool.providerBoundCount || 0}
+              </span>
             </button>
           ))}
         </div>
@@ -1263,31 +1262,17 @@ export default function ProviderDetailPage() {
           Add Model
         </button>
 
-        {/* Import Qoder models button — only show for qoder/qoder-cn provider */}
-        {(providerId === "qoder" || providerId === "qoder-cn") && connections.some((conn) => conn.isActive !== false) && (
+        {/* Universal Fetch Models button — show for all providers when an active connection exists */}
+        {connections.some((conn) => conn.isActive !== false) && (
           <button
-            onClick={handleImportQoderModels}
-            disabled={importingQoderModels}
+            onClick={handleImportProviderModels}
+            disabled={importingProviderModels}
             className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-blue-500/40 px-3 py-2 text-xs text-blue-600 dark:text-blue-400 transition-colors hover:border-blue-500 hover:bg-blue-500/5 sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <span className="material-symbols-outlined text-sm" style={importingQoderModels ? { animation: "spin 1s linear infinite" } : undefined}>
-              {importingQoderModels ? "progress_activity" : "download"}
+            <span className="material-symbols-outlined text-sm" style={importingProviderModels ? { animation: "spin 1s linear infinite" } : undefined}>
+              {importingProviderModels ? "progress_activity" : "download"}
             </span>
-            {importingQoderModels ? translate("Fetching...") : translate("Fetch Qoder Models")}
-          </button>
-        )}
-
-        {/* Import Cline /models catalog button — only show for cline and clinepass providers */}
-        {(providerId === "cline" || providerId === "clinepass") && connections.some((conn) => conn.isActive !== false) && (
-          <button
-            onClick={handleImportClineModels}
-            disabled={importingClineModels}
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-blue-500/40 px-3 py-2 text-xs text-blue-600 dark:text-blue-400 transition-colors hover:border-blue-500 hover:bg-blue-500/5 sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <span className="material-symbols-outlined text-sm" style={importingClineModels ? { animation: "spin 1s linear infinite" } : undefined}>
-              {importingClineModels ? "progress_activity" : "download"}
-            </span>
-            {importingClineModels ? translate("Fetching...") : translate("Import from /models")}
+            {importingProviderModels ? translate("Fetching...") : translate("Fetch Models")}
           </button>
         )}
 
@@ -1943,10 +1928,8 @@ export default function ProviderDetailPage() {
           isOpen={showAddCustomModel}
           providerAlias={providerStorageAlias}
           providerDisplayAlias={providerDisplayAlias}
-          onSave={async (modelId, caps, transport) => {
-            // caps.stt is a UI-only flag; the API accepts transports only on
-            // type "stt" records, so the save derives the type from it.
-            await handleAddCustomModel(modelId, caps?.stt ? "stt" : "llm", providerStorageAlias, caps, transport);
+          onSave={async (modelId, type, caps, transport) => {
+            await handleAddCustomModel(modelId, type, providerStorageAlias, caps, transport);
             setShowAddCustomModel(false);
           }}
           onClose={() => setShowAddCustomModel(false)}

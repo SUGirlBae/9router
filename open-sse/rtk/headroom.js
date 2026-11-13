@@ -104,6 +104,17 @@ function hasUnsafeResponsesInputForCompression(body) {
   });
 }
 
+function hasUnsafeNonToolResponsesInput(body) {
+  if (!Array.isArray(body?.tools) || body.tools.length === 0) return false;
+  if (!Array.isArray(body?.input)) return false;
+  return body.input.some((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    return typeof item.type === "string"
+      && item.type !== "message"
+      && item.type !== RESPONSES_ITEM.FUNCTION_CALL_OUTPUT;
+  });
+}
+
 // Project only plain tool-output leaves. Keep protocol items and structured
 // payloads in their native format instead of round-tripping the conversation.
 function collectToolOutputText(body, format) {
@@ -419,6 +430,11 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
   try {
     if (diagnostics) diagnostics.before = captureSizeSnapshot(body);
 
+    if (format === "openai-responses" && hasUnsafeNonToolResponsesInput(body)) {
+      setDiagnostic(diagnostics, "skipped: openai-responses tool/reasoning input is not safe to compress");
+      return null;
+    }
+
     const toolOutputs = collectToolOutputText(body, format);
     if (toolOutputs) {
       if (!toolOutputs.messages.length) {
@@ -450,10 +466,6 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
     // messages. Translate input -> OpenAI -> compress -> translate back to input so
     // body.input keeps the Responses contract (the proxy only understands OpenAI). (#1998)
     if (format === "openai-responses") {
-      if (hasUnsafeResponsesInputForCompression(body)) {
-        setDiagnostic(diagnostics, "skipped: openai-responses tool/reasoning input is not safe to compress");
-        return null;
-      }
       const oai = openaiResponsesToOpenAIRequest(model, body, false);
       if (!Array.isArray(oai?.messages)) {
         setDiagnostic(diagnostics, "openai-responses request did not translate to messages[]");

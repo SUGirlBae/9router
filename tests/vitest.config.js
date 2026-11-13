@@ -1,10 +1,15 @@
-import { defineConfig } from "vitest/config";
 import { resolve } from "path";
 import { fileURLToPath } from "url";
+import fs from "fs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
-export default defineConfig({
+const undiciCandidate = [
+  resolve(__dirname, "../app/node_modules/undici"),
+  "C:/Users/Administrator/AppData/Roaming/npm/node_modules/9router/app/node_modules/undici"
+].find((p) => fs.existsSync(p)) || resolve(__dirname, "../app/node_modules/undici");
+
+export default {
   test: {
     environment: "node",
     globals: true,
@@ -24,6 +29,7 @@ export default defineConfig({
       { find: /^open-sse\//, replacement: resolve(__dirname, "../open-sse") + "/" },
       { find: "open-sse", replacement: resolve(__dirname, "../open-sse") },
       { find: /^@\//, replacement: resolve(__dirname, "../src") + "/" },
+      { find: "undici", replacement: undiciCandidate },
     ],
   },
-});
+};

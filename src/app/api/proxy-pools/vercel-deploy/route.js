@@ -1,12 +1,49 @@
 import { NextResponse } from "next/server";
-import { createProxyPool } from "@/models";
+import { createProxyPool, getProxyPools, updateProxyPool } from "@/models";
 
 const VERCEL_API = "https://api.vercel.com";
 
 // Relay function source code deployed to Vercel
 // Forwards requests to target URL specified in x-relay-target header
-const RELAY_FUNCTION_CODE = `
+const RELAY_FUNCTION_CODE = `// Vercel Edge relay — FIXED: clean headers object stripping all identifying/proxy headers & prefixes.
 export const config = { runtime: "edge" };
+
+const STRIP_PREFIXES = [
+  "cf-",
+  "x-vercel-",
+  "x-nf-",
+  "netlify-",
+  "x-forwarded-",
+  "x-amzn-",
+];
+
+const STRIP_EXACT = new Set([
+  "x-relay-target",
+  "x-relay-path",
+  "host",
+  "forwarded",
+  "via",
+  "cdn-loop",
+  "x-real-ip",
+  "x-client-ip",
+  "x-cluster-client-ip",
+  "true-client-ip",
+  "x-country",
+  "traceparent",
+  "tracestate",
+  "logs-url",
+  "x-invocation-id",
+  "x-middleware-subrequest",
+]);
+
+function shouldStrip(name) {
+  const lower = String(name).toLowerCase();
+  if (STRIP_EXACT.has(lower)) return true;
+  for (const p of STRIP_PREFIXES) {
+    if (lower.startsWith(p)) return true;
+  }
+  return false;
+}
 
 export default async function handler(req) {
   const target = req.headers.get("x-relay-target");
@@ -21,10 +58,9 @@ export default async function handler(req) {
   const targetUrl = target.replace(/\\/$/, "") + relayPath;
 
   const rawHeaders = {};
-  for (const [k, v] of req.headers.entries()) rawHeaders[k] = v;
-  delete rawHeaders["x-relay-target"];
-  delete rawHeaders["x-relay-path"];
-  delete rawHeaders["host"];
+  for (const [k, v] of req.headers.entries()) {
+    if (!shouldStrip(k)) rawHeaders[k] = v;
+  }
 
   const response = await fetch(targetUrl, {
     method: req.method,
@@ -125,15 +161,25 @@ export async function POST(request) {
     const ready = await pollDeployment(deploymentId, vercelToken);
     const deployUrl = `https://${ready.url}`;
 
-    // Create proxy pool entry with type vercel
-    const proxyPool = await createProxyPool({
-      name: projectName,
-      proxyUrl: deployUrl,
-      type: "vercel",
-      noProxy: "",
-      isActive: true,
-      strictProxy: false,
-    });
+    // Upsert proxy pool entry with type vercel (strictProxy: true)
+    const existingPools = await getProxyPools();
+    const existingPool = existingPools.find((p) => p.name === projectName || p.proxyUrl === deployUrl);
+    const proxyPool = existingPool
+      ? await updateProxyPool(existingPool.id, {
+          name: projectName,
+          proxyUrl: deployUrl,
+          type: "vercel",
+          isActive: true,
+          strictProxy: true,
+        })
+      : await createProxyPool({
+          name: projectName,
+          proxyUrl: deployUrl,
+          type: "vercel",
+          noProxy: "",
+          isActive: true,
+          strictProxy: true,
+        });
 
     return NextResponse.json({ proxyPool, deployUrl }, { status: 201 });
   } catch (error) {

@@ -4,7 +4,8 @@ const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
-const ROOT = "C:/Users/Administrator/AppData/Roaming/npm/node_modules/9router";
+const rootIdx = process.argv.indexOf("--root");
+const ROOT = process.env.NINEROUTER_ROOT || (rootIdx !== -1 && process.argv[rootIdx + 1]) || "C:/Users/Administrator/AppData/Roaming/npm/node_modules/9router";
 const BUILD_SERVER = path.join(ROOT, "app/.next-cli-build/server");
 const BUILD_STATIC = path.join(ROOT, "app/.next-cli-build/static");
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -75,13 +76,19 @@ for (const f of ["chunks/24.js", "chunks/412.js", "chunks/8402.js"]) {
 // 3. Provider model catalog (2598.js, 4480.js, 8499.js)
 const OLD_MODELS = '{id:"smodel",name:"Sonus"},{id:"cmodel",name:"Cantus"}';
 const NEW_MODELS = '{id:"smodel",name:"Sonus"},{id:"cmodel",name:"Cantus"},{id:"lmodel",name:"QoDuck"},{id:"qoduck",name:"QoDuck"}';
-for (const f of ["chunks/2598.js", "chunks/4480.js", "chunks/8499.js"]) {
+for (const f of ["chunks/2598.js", "chunks/4480.js", "chunks/8499.js", "chunks/2184.js", "chunks/6010.js", "chunks/8339.js"]) {
   patch(path.join(BUILD_SERVER, f), '{id:"qoduck",name:"QoDuck"}', OLD_MODELS, NEW_MODELS);
 }
 
 // 4. Static UI chunks (1321-*.js, 5497-*.js)
-patch(path.join(BUILD_STATIC, "chunks/1321-02944667ec55f586.js"), '{id:"qoduck",name:"QoDuck"}', OLD_MODELS, NEW_MODELS);
-patch(path.join(BUILD_STATIC, "chunks/5497-870732fd9d818574.js"), 'qoduck:{vision:!0,reasoning:!0', OLD_CAPS, NEW_CAPS);
+const staticChunksDir = path.join(BUILD_STATIC, "chunks");
+if (fs.existsSync(staticChunksDir)) {
+  const staticFiles = fs.readdirSync(staticChunksDir);
+  const f1321 = staticFiles.find((f) => f.startsWith("1321-") && f.endsWith(".js") && !f.endsWith(".bak"));
+  if (f1321) patch(path.join(staticChunksDir, f1321), '{id:"qoduck",name:"QoDuck"}', OLD_MODELS, NEW_MODELS);
+  const f5497 = staticFiles.find((f) => f.startsWith("5497-") && f.endsWith(".js") && !f.endsWith(".bak"));
+  if (f5497) patch(path.join(staticChunksDir, f5497), 'qoduck:{vision:!0,reasoning:!0', OLD_CAPS, NEW_CAPS);
+}
 
 // 5. Model routing, normalization & effort forwarding in 5330.js
 const OLD_ROUTE = String.raw`var k,l;let q=String(a||"").replace(/^qoder\//,"").replace(/(?:\([^)]*\)|\[[^\]]*\])+$/,""),r=await (0,n.X5)(c,q,{log:d,proxyOptions:e,signal:h`;
@@ -90,7 +97,7 @@ patch(path.join(BUILD_SERVER, "chunks/5330.js"), 'q=q.replace(/^qd\\//,"")', OLD
 
 const OLD_PARAM = 'parameters:{max_tokens:y},chat_context:{chatPrompt:"",imageUrls:null,extra:{context:[],modelConfig:{key:q,is_reasoning:w},originalContent:z}';
 const NEW_PARAM = 'parameters:{max_tokens:y,...(_effNorm?{reasoning_effort:_effNorm,enable_thinking:_effNorm!=="none"}:{}),...(q==="lmodel"?{context_length:1e6}:{})},chat_context:{chatPrompt:"",imageUrls:null,extra:{context:[],modelConfig:{key:q,is_reasoning:(_effNorm==="none"?!1:w),...(_effNorm?{reasoning_effort:_effNorm}:{})},ideModelConfigOverride:{...(q==="lmodel"?{max_input_tokens:1e6}:{})},originalContent:z}';
-patch(path.join(BUILD_SERVER, "chunks/5330.js"), 'context_length:1e6', OLD_PARAM, NEW_PARAM);
+patch(path.join(BUILD_SERVER, "chunks/5330.js"), 'enable_thinking:_effNorm', OLD_PARAM, NEW_PARAM);
 
 // Syntax check
 if (!DRY_RUN) {

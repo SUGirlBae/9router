@@ -4,7 +4,7 @@
 // backend accepts them. Catalog and other passthrough requests retain the
 // client's current identity. Hardcoded MVP — toggle/version configurable later.
 
-const ANTIGRAVITY_IDE_VERSION = "2.24.0";
+const ANTIGRAVITY_IDE_VERSION = process.env.ANTIGRAVITY_VERSION || "2.31.1";
 const ANTIGRAVITY_IDE_VERSION_OVERRIDE_ENABLED = true;
 
 function shouldRewriteMetadata(metadata) {
@@ -16,7 +16,10 @@ function shouldRewriteMetadata(metadata) {
 
 function rewriteAntigravityUserAgent(userAgent, version) {
   if (typeof userAgent !== "string" || !userAgent.includes("antigravity/")) return userAgent;
-  return userAgent.replace(/antigravity\/[^\s]+/, `antigravity/${version}`);
+  if (userAgent.includes("antigravity/hub/")) {
+    return userAgent.replace(/antigravity\/hub\/[^\s()]+/, `antigravity/hub/${version}`);
+  }
+  return userAgent.replace(/antigravity\/[^\s()]+/, `antigravity/${version}`);
 }
 
 function applyAntigravityIdeVersionOverride(bodyBuffer, headers, requestUrl) {

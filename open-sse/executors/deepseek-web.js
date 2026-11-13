@@ -4,6 +4,7 @@
 // guarded by a DeepSeekHashV1 proof-of-work header; auth is the `userToken` from
 // DeepSeek localStorage exchanged for a short-lived access token via /users/current.
 import { BaseExecutor } from "./base.js";
+import { ACCEPT_ENCODING } from "../utils/zstdCompat.js";
 import { SSE_DONE, SSE_HEADERS_NO_BUFFER } from "../utils/sseConstants.js";
 import { sseChunk } from "../utils/sse.js";
 import { solveDeepSeekPowAsync } from "../lib/deepseek-pow.js";
@@ -37,7 +38,7 @@ const COMPLETION_URL = `${DEEPSEEK_API_BASE}/v0/chat/completion`;
 // that JS, and it is not currently enforced by the completion endpoint.
 const FAKE_HEADERS = {
   Accept: "*/*",
-  "Accept-Encoding": "gzip, deflate, br, zstd",
+  "Accept-Encoding": ACCEPT_ENCODING,
   "Accept-Language": "en-US,en;q=0.9",
   Origin: DEEPSEEK_WEB_BASE,
   Referer: `${DEEPSEEK_WEB_BASE}/`,
@@ -355,6 +356,7 @@ async function collectSSEContent(deepseekStream, model) {
   // hiccup) mid-stream was silently reported as a normal "stop" completion with whatever
   // partial content had arrived so far.
   let sawFinished = false;
+  let hintErr = null;
   const streamModel = model || "deepseek-web";
   const thinkingModel = isThinkingModel(streamModel);
   const searchResults = [];
@@ -401,6 +403,9 @@ async function collectSSEContent(deepseekStream, model) {
         const p = data?.p;
         const v = data?.v;
 
+        if (data?.type === "error" && data?.finish_reason) {
+          hintErr = `${String(data.content || "")} [${data.finish_reason}]`;
+        }
         if (p === "response/status" && v === "FINISHED") sawFinished = true;
 
         if (v && typeof v === "object" && v.response) {
@@ -471,8 +476,10 @@ async function collectSSEContent(deepseekStream, model) {
   // partial stub as a successful "stop" response.
   if (!sawFinished) {
     throw new Error(
-      "DeepSeek web session ended before completion (no FINISHED signal received) — " +
-        "likely a dropped cookie session or network interruption upstream. Retry the request."
+      hintErr
+        ? `DeepSeek upstream: ${hintErr}`
+        : "DeepSeek web session ended before completion (no FINISHED signal received) — " +
+          "likely a dropped cookie session or network interruption upstream. Retry the request."
     );
   }
 

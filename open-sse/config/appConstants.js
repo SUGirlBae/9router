@@ -1,6 +1,6 @@
 import { platform, arch, hostname } from "os";
 import { PROVIDERS, PROVIDER_OAUTH } from "./providers.js";
-import { ANTIGRAVITY_IDE_USER_AGENT } from "../providers/shared.js";
+import { ANTIGRAVITY_IDE_USER_AGENT, ANTIGRAVITY_IDE_VERSION } from "../providers/shared.js";
 import { createRequire } from "module";
 
 // Nous Portal requires attribution for some API-key models. Use a neutral
@@ -77,8 +77,11 @@ export function getPlatformUserAgent() {
 
 export const CLIENT_METADATA = {
   ideType: IDE_TYPE.ANTIGRAVITY,
+  ideVersion: ANTIGRAVITY_IDE_VERSION,
+  pluginVersion: ANTIGRAVITY_IDE_VERSION,
   platform: getPlatformEnum(),
-  pluginType: PLUGIN_TYPE.GEMINI
+  pluginType: PLUGIN_TYPE.GEMINI,
+  ideName: "antigravity"
 };
 
 // Internal anti-loop header
@@ -176,8 +179,11 @@ export const ANTIGRAVITY_LOAD_CODE_ASSIST_HEADERS = {
 
 export const LOAD_CODE_ASSIST_METADATA = {
   ideType: IDE_TYPE.ANTIGRAVITY,
+  ideVersion: ANTIGRAVITY_IDE_VERSION,
+  pluginVersion: ANTIGRAVITY_IDE_VERSION,
   platform: getPlatformEnum(),
   pluginType: PLUGIN_TYPE.GEMINI,
+  ideName: "antigravity"
 };
 
 // System prompts

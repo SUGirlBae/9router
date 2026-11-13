@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createProxyPool } from "@/models";
+import { createProxyPool, getProxyPools, updateProxyPool } from "@/models";
 import {
   NETLIFY_API,
   NETLIFY_FUNCTION_NAME,
@@ -39,28 +39,63 @@ export async function POST(request) {
       "Content-Type": "application/json",
     };
 
-    // 1. Create site (name → <name>.netlify.app; random if taken → 422).
-    const siteRes = await fetch(`${NETLIFY_API}/sites`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ name: siteName }),
-    });
+    // 1. Reuse existing site or create new one with public visibility (sso_login: false).
+    let site = null;
+    try {
+      const listRes = await fetch(`${NETLIFY_API}/sites?per_page=100`, {
+        headers: netlifyHeaders(netlifyToken),
+      });
+      if (listRes.ok) {
+        const list = await listRes.json().catch(() => []);
+        if (Array.isArray(list)) {
+          site = list.find((s) => String(s?.name || "").toLowerCase() === siteName) || null;
+        }
+      }
+    } catch {}
 
-    if (!siteRes.ok) {
-      const message = await readError(siteRes, "Failed to create Netlify site");
-      const status = siteRes.status === 422 ? 409 : siteRes.status;
-      const hint =
-        siteRes.status === 422
-          ? ` Site name "${siteName}" is taken — choose a different name.`
-          : "";
-      return NextResponse.json({ error: `${message}.${hint}` }, { status });
+    let effectiveSiteName = siteName;
+    if (!site) {
+      let siteRes = await fetch(`${NETLIFY_API}/sites`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ name: effectiveSiteName, sso_login: false, account_sso_login: false }),
+      });
+
+      if (siteRes.status === 422) {
+        effectiveSiteName = `${siteName}-${Date.now().toString(36).slice(-5)}`;
+        siteRes = await fetch(`${NETLIFY_API}/sites`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ name: effectiveSiteName, sso_login: false, account_sso_login: false }),
+        });
+      }
+
+      if (!siteRes.ok) {
+        const message = await readError(siteRes, "Failed to create Netlify site");
+        const status = siteRes.status === 422 ? 409 : siteRes.status;
+        return NextResponse.json({ error: message }, { status });
+      }
+
+      site = await siteRes.json();
     }
 
-    const site = await siteRes.json();
     const siteId = site.id || site.site_id;
     const siteUrl = site.ssl_url || site.url;
     if (!siteId || !siteUrl) {
       return NextResponse.json({ error: "Netlify site created but no site URL returned" }, { status: 502 });
+    }
+
+    if (site.sso_login !== false || site.account_sso_login !== false) {
+      try {
+        const patchRes = await fetch(`${NETLIFY_API}/sites/${siteId}`, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ sso_login: false, account_sso_login: false }),
+        });
+        if (patchRes.ok) {
+          site = await patchRes.json().catch(() => site);
+        }
+      } catch {}
     }
 
     // 2. Digest deploy: index.html (SHA1) + relay function bundle (SHA256).
@@ -124,19 +159,43 @@ export async function POST(request) {
       }
     }
 
-    // 4. Poll until the deploy is live.
+    // 4. Poll until the deploy is live, then re-verify site visibility.
     await pollDeployReady(deployId, netlifyToken);
-    const relayUrl = buildRelayUrl(siteUrl);
+    try {
+      const patchRes = await fetch(`${NETLIFY_API}/sites/${siteId}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ sso_login: false, account_sso_login: false }),
+      });
+      if (patchRes.ok) {
+        site = await patchRes.json().catch(() => site);
+      }
+    } catch {}
 
-    // Create proxy pool entry with type netlify
-    const proxyPool = await createProxyPool({
-      name: siteName,
+    const relayUrl = buildRelayUrl(siteUrl);
+    const finalName = site.name || effectiveSiteName;
+    const isPrivate = site.sso_login === true || site.account_sso_login === true;
+    const testStatus = isPrivate ? "error" : "active";
+    const lastError = isPrivate
+      ? "Netlify site is Private (401). Set Project visibility to Public in Netlify."
+      : null;
+
+    // Upsert proxy pool entry with type netlify
+    const existingPools = await getProxyPools();
+    const existingPool = existingPools.find((p) => p.proxyUrl === relayUrl || p.name === finalName);
+    const poolPayload = {
+      name: finalName,
       proxyUrl: relayUrl,
       type: "netlify",
-      noProxy: "",
-      isActive: true,
-      strictProxy: false,
-    });
+      isActive: !isPrivate,
+      strictProxy: true,
+      testStatus,
+      lastTestedAt: new Date().toISOString(),
+      lastError,
+    };
+    const proxyPool = existingPool
+      ? await updateProxyPool(existingPool.id, poolPayload)
+      : await createProxyPool({ ...poolPayload, noProxy: "" });
 
     return NextResponse.json({ proxyPool, deployUrl: relayUrl }, { status: 201 });
   } catch (error) {

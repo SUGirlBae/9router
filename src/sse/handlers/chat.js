@@ -277,7 +277,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastHeaders = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model });
+    const preferredConnectionId = request?.headers?.get?.("x-connection-id") || null;
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
+      requestedModel: requestedModel || model,
+      ...(preferredConnectionId ? { preferredConnectionId } : {}),
+    });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
@@ -311,6 +315,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
+    const chatRequestStartMs = Date.now();
     const result = await handleChatCore({
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
@@ -351,7 +356,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         });
       },
       onRequestSuccess: async () => {
-        await clearAccountError(credentials.connectionId, credentials, model);
+        const ttftMs = Date.now() - chatRequestStartMs;
+        await clearAccountError(credentials.connectionId, credentials, model, ttftMs);
         // "Consecutive" strikes: a success clears the breaker for this pair.
         clearAntigravityStrikes(credentials.connectionId, model);
       }

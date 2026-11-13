@@ -93,8 +93,12 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
   if (allowSampling && body.top_k !== undefined) {
     result.generationConfig.topK = body.top_k;
   }
-  if (body.max_tokens !== undefined) {
-    result.generationConfig.maxOutputTokens = body.max_tokens;
+  const maxTokens = body.max_tokens ?? body.max_completion_tokens ?? body.max_output_tokens;
+  if (maxTokens !== undefined) {
+    result.generationConfig.maxOutputTokens = maxTokens;
+  }
+  if (body.stop !== undefined) {
+    result.generationConfig.stopSequences = Array.isArray(body.stop) ? body.stop.map(String).slice(0, 5) : [String(body.stop)];
   }
 
   // Build tool_call_id -> name map
@@ -279,7 +283,23 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
   // Convert tools
   if (body.tools && Array.isArray(body.tools) && body.tools.length > 0) {
     const functionDeclarations = [];
+    let hasGoogleSearch = false;
+    let hasUrlContext = false;
+    let hasCodeExecution = false;
     for (const t of body.tools) {
+      if (!t || typeof t !== "object") continue;
+      if (t.googleSearch || t.google_search || t.type === "web_search" || t.type === "google_search" || t.type === "googleSearch") {
+        hasGoogleSearch = true;
+        continue;
+      }
+      if (t.urlContext || t.url_context || t.type === "url_context" || t.type === "urlContext" || t.type === "web_fetch") {
+        hasUrlContext = true;
+        continue;
+      }
+      if (t.codeExecution || t.code_execution || t.type === "code_execution" || t.type === "codeExecution") {
+        hasCodeExecution = true;
+        continue;
+      }
       // Check if already in Anthropic/Claude format (no type field, direct name/description/input_schema)
       if (t.name && t.input_schema) {
         const cleanedSchema = cleanJSONSchemaForAntigravity(structuredClone(t.input_schema || { type: "object", properties: {} }));
@@ -301,8 +321,13 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
       }
     }
 
-    if (functionDeclarations.length > 0) {
-      result.tools = [{ functionDeclarations }];
+    const geminiTools = [];
+    if (functionDeclarations.length > 0) geminiTools.push({ functionDeclarations });
+    if (hasGoogleSearch) geminiTools.push({ googleSearch: {} });
+    if (hasUrlContext) geminiTools.push({ urlContext: {} });
+    if (hasCodeExecution) geminiTools.push({ codeExecution: {} });
+    if (geminiTools.length > 0) {
+      result.tools = geminiTools;
     }
   }
 
@@ -366,7 +391,7 @@ function wrapInCloudCodeEnvelope(model, geminiCLI, credentials = null, isAntigra
     envelope.request.safetySettings = geminiCLI.safetySettings;
   }
 
-  if (geminiCLI.tools?.length > 0) {
+  if (geminiCLI.tools?.some(g => g?.functionDeclarations?.length > 0)) {
     envelope.request.toolConfig = {
       functionCallingConfig: { mode: "VALIDATED" }
     };
@@ -390,8 +415,11 @@ function wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentials = nu
       sessionId: toNumericSessionId(credentials?._clientSessionId) || deriveSessionId(credentials?.email || credentials?.connectionId),
       contents: [],
       generationConfig: {
-        temperature: claudeRequest.temperature || 1,
-        maxOutputTokens: claudeRequest.max_tokens || 4096
+        temperature: claudeRequest.temperature !== undefined ? claudeRequest.temperature : 1.0,
+        maxOutputTokens: claudeRequest.max_tokens ?? 8192,
+        ...(claudeRequest.top_p !== undefined ? { topP: claudeRequest.top_p } : {}),
+        ...(claudeRequest.top_k !== undefined ? { topK: claudeRequest.top_k } : {}),
+        ...(Array.isArray(claudeRequest.stop_sequences) && claudeRequest.stop_sequences.length > 0 ? { stopSequences: claudeRequest.stop_sequences } : {}),
       }
     }
   };

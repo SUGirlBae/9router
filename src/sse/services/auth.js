@@ -4,6 +4,7 @@ import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLock
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache, getAntigravityModelQuota } from "./antigravityQuota.js";
+import { isCircuitOpen, recordConnectionFailure, recordConnectionSuccess, selectOptimalConnection, scoreConnection } from "open-sse/services/latencyOrchestrator.js";
 import * as log from "../utils/logger.js";
 
 // Mutex to prevent race conditions during account selection
@@ -145,22 +146,32 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const providerOverride = (settings.providerStrategies || {})[providerId] || {};
     const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
 
+    // Prefer connections with closed circuit breakers (fail-open if all circuits tripped)
+    const healthyCircuits = availableConnections.filter(c => !isCircuitOpen(c.id));
+    const candidatePool = healthyCircuits.length > 0 ? healthyCircuits : availableConnections;
+
     let connection;
-    // Pin to preferred connection if specified and available
+    // Pin to preferred connection if specified (even if excluded on retry, matching patch-9r-pin-sticky)
     if (preferredConnectionId) {
-      connection = availableConnections.find((c) => c.id === preferredConnectionId);
+      connection = connections.find((c) => c.id === preferredConnectionId);
       if (connection) {
         log.info("AUTH", `${provider} | pinned to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
       }
     }
     if (connection) {
       // skip strategy
+    } else if (strategy === "least-latency" || strategy === "fastest") {
+      connection = selectOptimalConnection(candidatePool) || candidatePool[0];
+      await updateProviderConnection(connection.id, {
+        lastUsedAt: new Date().toISOString(),
+        consecutiveUseCount: (connection.consecutiveUseCount || 0) + 1
+      });
     } else if (strategy === "round-robin") {
       const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
 
       // Sort by lastUsed (most recent first) to find current candidate
-      const byRecency = [...availableConnections].sort((a, b) => {
-        if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
+      const byRecency = [...candidatePool].sort((a, b) => {
+        if (!a.lastUsedAt && !b.lastUsedAt) return scoreConnection(a) - scoreConnection(b);
         if (!a.lastUsedAt) return 1;
         if (!b.lastUsedAt) return -1;
         return new Date(b.lastUsedAt) - new Date(a.lastUsedAt);
@@ -178,9 +189,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           consecutiveUseCount: (connection.consecutiveUseCount || 0) + 1
         });
       } else {
-        // Pick the least recently used (excluding current if possible)
-        const sortedByOldest = [...availableConnections].sort((a, b) => {
-          if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
+        // Pick the least recently used (preferring lower latency score on ties)
+        const sortedByOldest = [...candidatePool].sort((a, b) => {
+          if (!a.lastUsedAt && !b.lastUsedAt) return scoreConnection(a) - scoreConnection(b);
           if (!a.lastUsedAt) return -1;
           if (!b.lastUsedAt) return 1;
           return new Date(a.lastUsedAt) - new Date(b.lastUsedAt);
@@ -195,8 +206,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         });
       }
     } else {
-      // Default: fill-first (already sorted by priority in getProviderConnections)
-      connection = availableConnections[0];
+      // Default: fill-first (prefer healthy circuits, sorted by priority)
+      connection = candidatePool[0];
     }
 
     const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
@@ -271,6 +282,7 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   }
   if (!shouldFallback) return { shouldFallback: false, cooldownMs: 0 };
 
+  recordConnectionFailure(connectionId, status);
   const reason = typeof errorText === "string" ? errorText.slice(0, 200) : "Provider error";
   const lockUpdate = buildModelLockUpdate(githubResetAtMs ? null : model, cooldownMs);
 
@@ -303,8 +315,9 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
  * @param {object} currentConnection - credentials object (has _connection) or raw connection
  * @param {string|null} model - model that succeeded
  */
-export async function clearAccountError(connectionId, currentConnection, model = null) {
+export async function clearAccountError(connectionId, currentConnection, model = null, latencyMs = null) {
   if (!connectionId || connectionId === "noauth") return;
+  recordConnectionSuccess(connectionId, latencyMs);
   const conn = currentConnection._connection || currentConnection;
   const now = Date.now();
   const allLockKeys = Object.keys(conn).filter(k => k.startsWith("modelLock_"));

@@ -124,7 +124,7 @@ export function getModelUpstreamId(aliasOrId, modelId, clientBody = null) {
     const presetMatch = resolvedId.match(/\([^()]+\)\s*$/);
     const presetSuffix = presetMatch?.[0] || "";
     const resolvedBase = presetSuffix ? resolvedId.slice(0, presetMatch.index).trim() : resolvedId;
-    return resolvedBase + (suffix || (presetSuffix && tier ? `(${tier})` : presetSuffix));
+    return resolvedBase + (suffix || presetSuffix);
   }
   if (aliasOrId === "cx" && typeof baseId === "string" && baseId.endsWith(CODEX_REVIEW_SUFFIX)) {
     return baseId.slice(0, -CODEX_REVIEW_SUFFIX.length) + suffix;

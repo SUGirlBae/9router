@@ -3,7 +3,42 @@ import { createProxyPool } from "@/models";
 
 const DENO_V2_API = "https://api.deno.com/v2";
 
-const DENO_RELAY_CODE = `Deno.serve(async (request) => {
+const DENO_RELAY_CODE = `const STRIP_PREFIXES = [
+  "cf-",
+  "x-vercel-",
+  "x-nf-",
+  "netlify-",
+  "x-forwarded-",
+  "x-amzn-",
+];
+const STRIP_EXACT = new Set([
+  "x-relay-target",
+  "x-relay-path",
+  "host",
+  "forwarded",
+  "via",
+  "cdn-loop",
+  "x-real-ip",
+  "x-client-ip",
+  "x-cluster-client-ip",
+  "true-client-ip",
+  "x-country",
+  "traceparent",
+  "tracestate",
+  "logs-url",
+  "x-invocation-id",
+  "x-middleware-subrequest",
+]);
+function shouldStrip(name) {
+  const lower = String(name).toLowerCase();
+  if (STRIP_EXACT.has(lower)) return true;
+  for (const p of STRIP_PREFIXES) {
+    if (lower.startsWith(p)) return true;
+  }
+  return false;
+}
+
+Deno.serve(async (request) => {
   const target = request.headers.get("x-relay-target");
   const relayPath = request.headers.get("x-relay-path") || "/";
 
@@ -15,10 +50,10 @@ const DENO_RELAY_CODE = `Deno.serve(async (request) => {
   }
 
   const targetUrl = target.replace(/\\/$/, "") + relayPath;
-  const newHeaders = new Headers(request.headers);
-  newHeaders.delete("x-relay-target");
-  newHeaders.delete("x-relay-path");
-  newHeaders.delete("host");
+  const newHeaders = new Headers();
+  for (const [k, v] of request.headers.entries()) {
+    if (!shouldStrip(k)) newHeaders.set(k, v);
+  }
 
   const init = {
     method: request.method,

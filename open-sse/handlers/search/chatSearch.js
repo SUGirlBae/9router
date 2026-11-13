@@ -5,6 +5,8 @@
  */
 import { PROVIDER_MEDIA } from "../../providers/index.js";
 import { ANTIGRAVITY_IDE_USER_AGENT } from "../../providers/shared.js";
+import { getAntigravityDeviceProfile } from "../../services/antigravityDevice.js";
+import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 
 // Default search model + endpoint derive from registry searchViaChat (single source)
 const searchModel = (id) => PROVIDER_MEDIA[id]?.searchViaChat?.defaultModel;
@@ -106,7 +108,7 @@ const CHAT_SEARCH_CONFIG = {
     // Upstream 403s on a missing or fabricated project — surface the real cause
     requireCredentials: (credentials) =>
       credentials?.projectId ? null : "Antigravity account has no projectId — reconnect the account",
-    buildBody: (query, model, credentials) => ({
+    buildBody: (query, model, credentials, options = {}) => ({
       project: credentials.projectId,
       model,
       userAgent: AG_CLIENT_NAME,
@@ -114,14 +116,21 @@ const CHAT_SEARCH_CONFIG = {
       request: {
         contents: [{ role: "user", parts: [{ text: query }] }],
         tools: [{ googleSearch: {} }],
-        generationConfig: AG_SEARCH_GENERATION_CONFIG
+        generationConfig: {
+          ...AG_SEARCH_GENERATION_CONFIG,
+          ...(options?.max_output_tokens ? { maxOutputTokens: Math.min(options.max_output_tokens, 65536) } : {}),
+          ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+        }
       }
     }),
-    buildHeaders: (token) => ({
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      "User-Agent": ANTIGRAVITY_IDE_USER_AGENT
-    }),
+    buildHeaders: (token, credentials) => {
+      const profile = getAntigravityDeviceProfile(credentials?.email || credentials?.id || credentials?.connectionId);
+      return {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "User-Agent": profile.userAgent || ANTIGRAVITY_IDE_USER_AGENT
+      };
+    },
     extractAnswer: (data) => {
       // Antigravity wraps the Gemini payload in { response: {...} }
       const response = data?.response || data;
@@ -433,7 +442,8 @@ export async function handleChatSearch({
   maxResults,
   model,
   credentials,
-  log
+  log,
+  ...options
 }) {
   const startTime = Date.now();
   const cfg = CHAT_SEARCH_CONFIG[provider];
@@ -470,8 +480,9 @@ export async function handleChatSearch({
       : DEFAULT_MAX_RESULTS;
   const useModel = model || searchModel(provider);
   const url = cfg.endpoint(useModel);
-  const body = cfg.buildBody(query, useModel, credentials);
-  const headers = cfg.buildHeaders(token);
+  const body = cfg.buildBody(query, useModel, credentials, options);
+  const headers = cfg.buildHeaders(token, credentials);
+  const proxyOptions = options?.proxyOptions || credentials?.proxyOptions || null;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -479,12 +490,12 @@ export async function handleChatSearch({
   let upstreamStart = Date.now();
   let resp;
   try {
-    resp = await fetch(url, {
+    resp = await proxyAwareFetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
       signal: controller.signal
-    });
+    }, proxyOptions);
   } catch (err) {
     clearTimeout(timer);
     if (err?.name === "AbortError") {

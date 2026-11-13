@@ -88,16 +88,27 @@ export function missingSessionCookies(pairs) {
 
 /** Playwright addCookies() shape for the .muse.ai domain. */
 export function toMuseCookies(header) {
-  return parseCookiePairs(header).map(({ name, value }) => ({
-    name,
-    value,
-    domain: ".muse.ai",
-    path: "/",
-    secure: true,
-    httpOnly: false,
-    sameSite: "Lax",
-    expires: -1,
-  }));
+  return parseCookiePairs(header).map(({ name, value }) => {
+    if (name.startsWith("__Host-")) {
+      return {
+        name,
+        value,
+        url: "https://muse.ai/",
+        secure: true,
+        httpOnly: false,
+        sameSite: "Lax",
+      };
+    }
+    return {
+      name,
+      value,
+      domain: ".muse.ai",
+      path: "/",
+      secure: true,
+      httpOnly: false,
+      sameSite: "Lax",
+    };
+  });
 }
 
 function readSetCookies(response) {

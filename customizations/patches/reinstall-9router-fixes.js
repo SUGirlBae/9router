@@ -27,7 +27,17 @@ const HELPER = 'function __9rEsmNs(a){try{let b=a&&a.default;if(b&&"object"==typ
 const ESM_OLD = "function r(a){return p.has(a)||p.set(a,q(a).finally(()=>p.delete(a))),p.get(a)}";
 const ESM_NEW = HELPER + "function r(a){return p.has(a)||p.set(a,q(a).then(__9rEsmNs).finally(()=>p.delete(a))),p.get(a)}";
 for (const f of ["6690.js", "8128.js"]) {
-  step(`esmfix ${f}`, () => patchFile(path.join(BUILD, "chunks", f), "__9rEsmNs", ESM_OLD, ESM_NEW));
+  const target = path.join(BUILD, "chunks", f);
+  if (!fs.existsSync(target)) {
+    step(`esmfix ${f}`, () => "skipped (not in bundle)");
+    continue;
+  }
+  const text = fs.readFileSync(target, "utf8");
+  if (!text.includes(ESM_OLD) && text.includes("r(await import(")) {
+    step(`esmfix ${f}`, () => "native in upstream");
+    continue;
+  }
+  step(`esmfix ${f}`, () => patchFile(target, "__9rEsmNs", ESM_OLD, ESM_NEW));
 }
 
 // 2. deepseek-web login: reject the logged-out localStorage placeholder
@@ -43,6 +53,7 @@ step("vision model_type", () => patchFile(path.join(BUILD, "chunks/5330.js"), 'i
 // 4. the PoW solver module that was never published
 step("deepseek-pow-hash.js", () => {
   const dest = path.join(LIB, "deepseek-pow-hash.js");
+  if (fs.existsSync(dest)) return "already present";
   const src = path.join(HERE, "deepseek-pow-hash.js");
   if (!fs.existsSync(src)) throw Error("source module missing next to this script");
   fs.copyFileSync(src, dest);
@@ -61,7 +72,10 @@ for (const [name, r] of results) console.log(`${String(r).padEnd(18)} ${name}`);
 // syntax gate
 const { execFileSync } = require("child_process");
 for (const f of ["chunks/6690.js", "chunks/8128.js", "chunks/5330.js", "app/api/providers/web-login/route.js"]) {
-  execFileSync(process.execPath, ["--check", path.join(BUILD, f)], { stdio: "pipe" });
+  const full = path.join(BUILD, f);
+  if (fs.existsSync(full)) {
+    execFileSync(process.execPath, ["--check", full], { stdio: "pipe" });
+  }
 }
 console.log("\nall patched files parse OK");
 
@@ -78,6 +92,10 @@ const extra = [
   ["qwen-web provider", "patch-9r-qwen-web.js", ["--apply"]],
   ["kimi-web provider", "patch-9r-kimi-web.js", ["--apply"]],
   ["web-login map qwen/kimi", "patch-9r-weblogin-map.js", ["--apply"]],
+  ["universal fetch models", "patch-9r-fetch-models.js", ["--apply"]],
+  ["antigravity & codex model power", "patch-9r-model-power.js", ["--apply"]],
+  ["antigravity dynamic anti-abuse & safe mitm shield", "patch-9r-antigravity-shield.js", ["--apply"]],
+  ["dynamic latency-aware orchestrator & circuit breaker", "patch-9r-orchestrator.js", ["--apply"]],
 ];
 console.log("");
 for (const [label, script, args] of extra) {

@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { AntigravityExecutor } from "../../open-sse/executors/antigravity.js";
 import antigravity from "../../open-sse/providers/registry/antigravity.js";
+import { ANTIGRAVITY_IDE_USER_AGENT, ANTIGRAVITY_IDE_VERSION } from "../../open-sse/providers/shared.js";
 
 const MAX = 10000;
 function res(status, headers = {}, body = null) {
@@ -69,21 +70,22 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
 
   it("registry uses the daily IDE cloudcode host and user agent", () => {
     expect(antigravity.transport.baseUrls).toEqual(["https://daily-cloudcode-pa.googleapis.com"]);
-    expect(antigravity.transport.headers["User-Agent"]).toBe("antigravity/hub/2.24.0 darwin/arm64");
+    expect(antigravity.transport.headers["User-Agent"]).toBe(ANTIGRAVITY_IDE_USER_AGENT);
   });
 
   it("buildHeaders matches official IDE stream headers", () => {
     ag._lastSessionId = "sess-123";
     const h = ag.buildHeaders({ accessToken: "tok" }, true);
-    expect(h["User-Agent"]).toBe("antigravity/hub/2.24.0 darwin/arm64");
+    expect(h["User-Agent"]).toBe(ANTIGRAVITY_IDE_USER_AGENT);
     expect(h["Content-Type"]).toBe("application/json");
     expect(h["Authorization"]).toBe("Bearer tok");
+    expect(h).not.toHaveProperty("X-Client-Version");
     expect(h).not.toHaveProperty("X-Machine-Session-Id");
     expect(h).not.toHaveProperty("x-request-source");
     expect(h).not.toHaveProperty("Accept");
   });
 
-  it("transforms chat requests with official IDE requestId shape and 64000 token cap", () => {
+  it("transforms chat requests with official IDE requestId shape and enforces model output ceiling (128k for Claude)", () => {
     const out = ag.transformRequest("claude-opus-4-6-thinking", {
       request: {
         contents: [
@@ -96,6 +98,14 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
     }, true, { projectId: "project-1", connectionId: "conn-1" });
 
     expect(out.requestId).toMatch(/^agent\/[0-9a-f-]{36}\/\d{13}\/[0-9a-f-]{36}\/\d+$/);
-    expect(out.request.generationConfig.maxOutputTokens).toBe(64000);
+    expect(out.request.generationConfig.maxOutputTokens).toBe(90000);
+
+    const capped = ag.transformRequest("claude-opus-4-6-thinking", {
+      request: {
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+        generationConfig: { maxOutputTokens: 150000 },
+      },
+    }, true, { projectId: "project-1", connectionId: "conn-1" });
+    expect(capped.request.generationConfig.maxOutputTokens).toBe(128000);
   });
 });

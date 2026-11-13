@@ -94,7 +94,12 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
       ) return;
       setShowProxyDropdown(false);
     };
-    const close = () => setShowProxyDropdown(false);
+    const close = (e) => {
+      if (proxyDropdownRef.current && (e?.target === proxyDropdownRef.current || proxyDropdownRef.current.contains(e?.target))) {
+        return;
+      }
+      setShowProxyDropdown(false);
+    };
     document.addEventListener("mousedown", handleClick);
     window.addEventListener("resize", close);
     document.addEventListener("scroll", close, true);
@@ -277,7 +282,8 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
                 <div
                   ref={proxyDropdownRef}
                   style={proxyDropdownStyle}
-                  className="z-50 max-w-[78vw] min-w-[160px] overflow-y-auto rounded-lg border border-border bg-bg py-1 shadow-lg"
+                  onWheel={(e) => e.stopPropagation()}
+                  className="z-50 max-w-[78vw] min-w-[210px] overflow-y-auto overscroll-contain rounded-lg border border-border bg-bg py-1 shadow-lg"
                 >
                   <button
                     onClick={() => handleSelectProxy("__none__")}
@@ -289,9 +295,19 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
                     <button
                       key={pool.id}
                       onClick={() => handleSelectProxy(pool.id)}
-                      className={`w-full text-left px-3 py-1.5 text-sm hover:bg-black/5 dark:hover:bg-white/5 ${boundProxyPoolId === pool.id ? "text-primary font-medium" : "text-text-main"}`}
+                      className={`flex w-full items-center justify-between gap-3 text-left px-3 py-1.5 text-sm hover:bg-black/5 dark:hover:bg-white/5 ${boundProxyPoolId === pool.id ? "text-primary font-medium" : "text-text-main"}`}
                     >
-                      {pool.name}
+                      <span className="truncate">{pool.name}</span>
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-mono ${
+                          (pool.providerBoundCount || 0) > 0
+                            ? "bg-primary/15 text-primary font-semibold"
+                            : "bg-black/5 dark:bg-white/10 text-text-muted"
+                        }`}
+                        title={`Đã gán cho ${pool.providerBoundCount || 0} tài khoản trong provider này`}
+                      >
+                        {pool.providerBoundCount || 0}
+                      </span>
                     </button>
                   ))}
                 </div>,

@@ -12,6 +12,7 @@ const { DATA_DIR, MITM_DIR } = require("./paths");
 const { generateCert, getCertForDomain } = require("./cert/generate");
 const { getMitmAlias } = require("./dbReader");
 const { applyAntigravityIdeVersionOverride } = require("./antigravityIdeVersion");
+const { isTelemetrySinkhole, handleTelemetrySinkhole } = require("./telemetrySinkhole");
 const LOCAL_PORT = 443;
 const IS_WIN = process.platform === "win32";
 const ENABLE_FILE_LOG = IS_DEV;
@@ -306,6 +307,11 @@ const server = https.createServer(sslOptions, async (req, res) => {
     // Anti-loop: skip requests from 9Router
     if (req.headers[INTERNAL_REQUEST_HEADER.name] === INTERNAL_REQUEST_HEADER.value) {
       return passthrough(req, res, bodyBuffer);
+    }
+
+    // Telemetry sinkhole: absorb metrics/analytics locally so real machine IDs never leak upstream
+    if (isTelemetrySinkhole(req.url, req.headers.host)) {
+      return handleTelemetrySinkhole(req, res);
     }
 
     const tool = getToolForHost(req.headers.host);

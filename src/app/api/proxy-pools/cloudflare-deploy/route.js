@@ -1,13 +1,50 @@
 import { NextResponse } from "next/server";
-import { createProxyPool } from "@/models";
+import { createProxyPool, getProxyPools, updateProxyPool } from "@/models";
 
 // Relay worker source code deployed to Cloudflare
-const RELAY_WORKER_CODE = `
+const RELAY_WORKER_CODE = `// Cloudflare Worker relay — FIXED: clean Headers builder stripping all identifying/proxy headers & prefixes.
+const STRIP_PREFIXES = [
+  "cf-",
+  "x-vercel-",
+  "x-nf-",
+  "netlify-",
+  "x-forwarded-",
+  "x-amzn-",
+];
+
+const STRIP_EXACT = new Set([
+  "x-relay-target",
+  "x-relay-path",
+  "host",
+  "forwarded",
+  "via",
+  "cdn-loop",
+  "x-real-ip",
+  "x-client-ip",
+  "x-cluster-client-ip",
+  "true-client-ip",
+  "x-country",
+  "traceparent",
+  "tracestate",
+  "logs-url",
+  "x-invocation-id",
+  "x-middleware-subrequest",
+]);
+
+function shouldStrip(name) {
+  const lower = String(name).toLowerCase();
+  if (STRIP_EXACT.has(lower)) return true;
+  for (const p of STRIP_PREFIXES) {
+    if (lower.startsWith(p)) return true;
+  }
+  return false;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const target = request.headers.get("x-relay-target");
     const relayPath = request.headers.get("x-relay-path") || "/";
-    
+
     if (!target) {
       return new Response(JSON.stringify({ error: "Missing x-relay-target header" }), {
         status: 400,
@@ -16,19 +53,20 @@ export default {
     }
 
     const targetUrl = target.replace(/\\/$/, "") + relayPath;
+    const cleanHeaders = new Headers();
+    for (const [k, v] of request.headers.entries()) {
+      if (!shouldStrip(k)) cleanHeaders.set(k, v);
+    }
+
     const newRequestInit = {
       method: request.method,
-      headers: new Headers(request.headers),
+      headers: cleanHeaders,
     };
 
     if (request.method !== "GET" && request.method !== "HEAD") {
       newRequestInit.body = request.body;
       newRequestInit.duplex = "half";
     }
-
-    newRequestInit.headers.delete("x-relay-target");
-    newRequestInit.headers.delete("x-relay-path");
-    newRequestInit.headers.delete("host");
 
     try {
       const response = await fetch(targetUrl, newRequestInit);
@@ -61,21 +99,33 @@ export async function POST(request) {
     // 1. Upload Worker Script
     const workerScriptUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${projectName}`;
     
-    // Cloudflare requires multipart/form-data for worker script upload
-    const formData = new FormData();
-    formData.append("index.js", new Blob([RELAY_WORKER_CODE], { type: "application/javascript+module" }), "index.js");
-    formData.append("metadata", new Blob([JSON.stringify({
+    // Cloudflare requires multipart/form-data for worker script upload.
+    // Use Buffer with explicit boundary to avoid cross-realm FormData serialization bugs in Node/Undici.
+    const boundary = `----cfBoundary${Date.now().toString(16)}`;
+    const metadataStr = JSON.stringify({
       main_module: "index.js",
       compatibility_date: "2024-03-20",
       observability: { enabled: true }
-    })], { type: "application/json" }), "metadata.json");
+    });
+    const bodyBuffer = Buffer.from(
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="metadata"; filename="metadata.json"\r\n` +
+      `Content-Type: application/json\r\n\r\n` +
+      `${metadataStr}\r\n` +
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="index.js"; filename="index.js"\r\n` +
+      `Content-Type: application/javascript+module\r\n\r\n` +
+      `${RELAY_WORKER_CODE}\r\n` +
+      `--${boundary}--\r\n`
+    );
 
     const uploadRes = await fetch(workerScriptUrl, {
       method: "PUT",
       headers: {
         Authorization: `Bearer ${apiToken}`,
+        "Content-Type": `multipart/form-data; boundary=${boundary}`,
       },
-      body: formData,
+      body: bodyBuffer,
     });
 
     if (!uploadRes.ok) {
@@ -127,15 +177,25 @@ export async function POST(request) {
       );
     }
 
-    // Create proxy pool entry with type cloudflare
-    const proxyPool = await createProxyPool({
-      name: projectName,
-      proxyUrl: deployUrl,
-      type: "cloudflare",
-      noProxy: "",
-      isActive: true,
-      strictProxy: false,
-    });
+    // Upsert proxy pool entry with type cloudflare (strictProxy: true)
+    const existingPools = await getProxyPools();
+    const existingPool = existingPools.find((p) => p.proxyUrl === deployUrl || p.name === projectName);
+    const proxyPool = existingPool
+      ? await updateProxyPool(existingPool.id, {
+          name: projectName,
+          proxyUrl: deployUrl,
+          type: "cloudflare",
+          isActive: true,
+          strictProxy: true,
+        })
+      : await createProxyPool({
+          name: projectName,
+          proxyUrl: deployUrl,
+          type: "cloudflare",
+          noProxy: "",
+          isActive: true,
+          strictProxy: true,
+        });
 
     return NextResponse.json({ proxyPool, deployUrl }, { status: 201 });
   } catch (error) {

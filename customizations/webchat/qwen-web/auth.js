@@ -42,7 +42,8 @@ async function getBearerToken(profilePath = DEFAULT_PROFILE) {
 }
 
 async function getCookieJar(profilePath = DEFAULT_PROFILE) {
-  const ctx = await chromium.launchPersistentContext(profilePath, { headless: true });
+  const playwright = loadPlaywright();
+  const ctx = await playwright.chromium.launchPersistentContext(profilePath, { headless: true });
   try {
     const cookies = await ctx.cookies("https://chat.qwen.ai");
     // Return as header string: name=value; ...

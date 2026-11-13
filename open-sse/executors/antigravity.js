@@ -8,6 +8,9 @@ import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { cleanJSONSchemaForAntigravity, normalizeGeminiContents } from "../translator/formats/gemini.js";
 import { DEFAULT_THINKING_AG_SIGNATURE } from "../config/defaultThinkingSignature.js";
 import { getGeminiThoughtSignatureSync } from "../services/thoughtSignatureStore.js";
+import { ANTIGRAVITY_IDE_VERSION } from "../providers/shared.js";
+import { getCapabilitiesForModel } from "../providers/capabilities.js";
+import { getAntigravityDeviceProfile } from "../services/antigravityDevice.js";
 
 // Sanitize function name: Gemini requires [a-zA-Z_][a-zA-Z0-9_.:\-]{0,63}
 function sanitizeFunctionName(name) {
@@ -19,7 +22,6 @@ function sanitizeFunctionName(name) {
 
 const MAX_RETRY_AFTER_MS = 10000;
 const ANTIGRAVITY_TRANSIENT_RETRY_MAX_MS = 15000;
-const MAX_ANTIGRAVITY_OUTPUT_TOKENS = 64000;
 const ANTIGRAVITY_IDE_REQUEST_ID_RE = /^agent\/[^/]+\/\d+\/[^/]+\/\d+$/;
 
 const ANTIGRAVITY_TRANSIENT_ERROR_PATTERNS = [
@@ -98,13 +100,14 @@ function uuidFromSeed(seed) {
 }
 
 function buildIdeRequestId({ body, request, credentials, model, requestType }) {
-  if (ANTIGRAVITY_IDE_REQUEST_ID_RE.test(body?.requestId || "")) {
+  const accountKey = credentials?.email || credentials?.connectionId || credentials?.id || "";
+  if (ANTIGRAVITY_IDE_REQUEST_ID_RE.test(body?.requestId || "") && !accountKey) {
     return body.requestId;
   }
 
-  const sessionId = request?.sessionId || body?.request?.sessionId || credentials?._clientSessionId || credentials?.connectionId || credentials?.email || "anonymous";
-  const conversationId = uuidFromSeed(`antigravity:conversation:${sessionId}`);
-  const trajectoryId = uuidFromSeed(`antigravity:trajectory:${sessionId}:${model}:${requestType}`);
+  const sessionId = request?.sessionId || body?.request?.sessionId || credentials?._clientSessionId || accountKey || "anonymous";
+  const conversationId = uuidFromSeed(`antigravity:conversation:${accountKey}:${sessionId}`);
+  const trajectoryId = uuidFromSeed(`antigravity:trajectory:${accountKey}:${sessionId}:${model}:${requestType}`);
   const contentCount = Array.isArray(request?.contents) ? request.contents.length : 1;
   const step = Math.max(1, contentCount * 2 - 1);
   return `agent/${conversationId}/${Date.now()}/${trajectoryId}/${step}`;
@@ -162,10 +165,13 @@ export class AntigravityExecutor extends BaseExecutor {
   // sessionId comes from transformRequest output; base.execute runs transformRequest before
   // buildHeaders, so we read it from instance state cached there (fallback: explicit arg).
   buildHeaders(credentials, stream = true, sessionId = null) {
+    const creds = credentials?.credentials || credentials || {};
+    const connectionKey = creds.email || creds.id || creds.connectionId;
+    const profile = getAntigravityDeviceProfile(connectionKey);
     return {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${credentials.accessToken}`,
-      "User-Agent": this.config.headers?.["User-Agent"] || ANTIGRAVITY_HEADERS["User-Agent"],
+      "Authorization": `Bearer ${creds.accessToken}`,
+      "User-Agent": profile.userAgent || this.config.headers?.["User-Agent"] || ANTIGRAVITY_HEADERS["User-Agent"],
     };
   }
 
@@ -207,11 +213,12 @@ export class AntigravityExecutor extends BaseExecutor {
       const request = {
         contents,
         generationConfig: {
-          temperature: 1.0,
-          topP: 0.95,
-          topK: 40,
-          maxOutputTokens: 8192,
+          temperature: body.temperature ?? (body.request?.generationConfig?.temperature ?? 1.0),
+          topP: body.top_p ?? body.topP ?? (body.request?.generationConfig?.topP ?? 0.95),
+          topK: body.top_k ?? body.topK ?? (body.request?.generationConfig?.topK ?? 40),
+          maxOutputTokens: body.max_tokens ?? body.max_output_tokens ?? (body.request?.generationConfig?.maxOutputTokens ?? 8192),
           imageConfig,
+          ...(body.seed !== undefined ? { seed: body.seed } : {}),
         },
         sessionId,
         // No tools, no systemInstruction, no safetySettings for image gen
@@ -227,8 +234,10 @@ export class AntigravityExecutor extends BaseExecutor {
       };
     }
 
-    const rawSessionId = body.request?.sessionId || resolveSessionId({ headers: credentials?.rawHeaders, body, connectionId: credentials?.email || credentials?.connectionId, scope: "antigravity" });
-    const sessionId = toNumericSessionId(rawSessionId) || rawSessionId;
+    const accountKey = credentials?.email || credentials?.connectionId || credentials?.id || "";
+    const rawSessionId = body.request?.sessionId || resolveSessionId({ headers: credentials?.rawHeaders, body, connectionId: accountKey, scope: "antigravity" });
+    const scopedSessionSeed = accountKey ? `${accountKey}:${rawSessionId}` : rawSessionId;
+    const sessionId = toNumericSessionId(scopedSessionSeed) || rawSessionId;
 
     // ─── Standard (non-image) request ───
     // Fix contents for Claude models via Antigravity
@@ -277,10 +286,17 @@ export class AntigravityExecutor extends BaseExecutor {
     let tools = body.request?.tools;
 
     if (tools && tools.length > 0) {
-      // Merge all groups into a single functionDeclarations group (Gemini expects 1 group)
+      // Merge all groups into a single functionDeclarations group (Gemini expects 1 group),
+      // while preserving built-in grounding/search tools like { googleSearch: {} }.
       const seenToolNames = new Set();
       const allDeclarations = [];
+      const builtInTools = [];
       for (const group of tools) {
+        if (!group || typeof group !== "object") continue;
+        if (group.googleSearch || group.google_search || group.googleSearchRetrieval || group.urlContext || group.url_context || group.codeExecution || group.code_execution) {
+          builtInTools.push(group);
+          continue;
+        }
         for (const fn of group.functionDeclarations || []) {
           const name = sanitizeFunctionName(fn.name);
           if (seenToolNames.has(name)) continue;
@@ -294,7 +310,10 @@ export class AntigravityExecutor extends BaseExecutor {
           });
         }
       }
-      tools = allDeclarations.length > 0 ? [{ functionDeclarations: allDeclarations }] : [];
+      tools = [
+        ...(allDeclarations.length > 0 ? [{ functionDeclarations: allDeclarations }] : []),
+        ...builtInTools,
+      ];
     }
 
     // Strip tools/toolConfig (handled separately) and blacklisted fields that Google rejects
@@ -312,19 +331,20 @@ export class AntigravityExecutor extends BaseExecutor {
       }
     }
 
+    const modelCeiling = getCapabilitiesForModel("antigravity", model)?.maxOutput || 65536;
     const generationConfig = { ...(requestWithoutTools.generationConfig || {}) };
-    if (generationConfig.maxOutputTokens > MAX_ANTIGRAVITY_OUTPUT_TOKENS) {
-      generationConfig.maxOutputTokens = MAX_ANTIGRAVITY_OUTPUT_TOKENS;
+    if (generationConfig.maxOutputTokens > modelCeiling) {
+      generationConfig.maxOutputTokens = modelCeiling;
     }
 
     const transformedRequest = {
       ...requestWithoutTools,
       generationConfig,
       ...(contents && { contents }),
-      ...(tools && { tools }),
+      ...(tools?.length > 0 && { tools }),
       sessionId,
       safetySettings: undefined,
-      ...(tools?.length > 0 && { toolConfig: { functionCallingConfig: { mode: "VALIDATED" } } })
+      ...(tools?.some(g => g?.functionDeclarations?.length > 0) && { toolConfig: { functionCallingConfig: { mode: "VALIDATED" } } })
     };
 
     // Strip blacklisted thinking fields from top-level body (set by thinkingUnified.js at root, not body.request)

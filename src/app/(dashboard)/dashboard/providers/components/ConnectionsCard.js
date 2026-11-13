@@ -82,8 +82,20 @@ function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMov
       if (proxyDropdownRef.current && !proxyDropdownRef.current.contains(e.target))
         setShowProxyDropdown(false);
     };
+    const close = (e) => {
+      if (proxyDropdownRef.current && (e?.target === proxyDropdownRef.current || proxyDropdownRef.current.contains(e?.target))) {
+        return;
+      }
+      setShowProxyDropdown(false);
+    };
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    window.addEventListener("resize", close);
+    document.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      window.removeEventListener("resize", close);
+      document.removeEventListener("scroll", close, true);
+    };
   }, [showProxyDropdown]);
 
   const effectiveStatus = connection.testStatus === "unavailable" && !isCooldown ? "active" : connection.testStatus;
@@ -147,10 +159,25 @@ function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMov
                 <span className="text-[10px] leading-tight">Proxy</span>
               </button>
               {showProxyDropdown && (
-                <div className="absolute right-0 top-full mt-1 z-50 bg-bg border border-border rounded-lg shadow-lg py-1 min-w-[160px]">
+                <div
+                  onWheel={(e) => e.stopPropagation()}
+                  className="absolute right-0 top-full mt-1 z-50 max-h-60 overflow-y-auto overscroll-contain bg-bg border border-border rounded-lg shadow-lg py-1 min-w-[210px]"
+                >
                   <button onClick={() => handleSelectProxy("__none__")} className={`w-full text-left px-3 py-1.5 text-sm hover:bg-black/5 dark:hover:bg-white/5 ${!boundProxyPoolId ? "text-primary font-medium" : "text-text-main"}`}>None</button>
                   {(proxyPools || []).map((pool) => (
-                    <button key={pool.id} onClick={() => handleSelectProxy(pool.id)} className={`w-full text-left px-3 py-1.5 text-sm hover:bg-black/5 dark:hover:bg-white/5 ${boundProxyPoolId === pool.id ? "text-primary font-medium" : "text-text-main"}`}>{pool.name}</button>
+                    <button key={pool.id} onClick={() => handleSelectProxy(pool.id)} className={`flex w-full items-center justify-between gap-3 text-left px-3 py-1.5 text-sm hover:bg-black/5 dark:hover:bg-white/5 ${boundProxyPoolId === pool.id ? "text-primary font-medium" : "text-text-main"}`}>
+                      <span className="truncate">{pool.name}</span>
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-mono ${
+                          (pool.providerBoundCount || 0) > 0
+                            ? "bg-primary/15 text-primary font-semibold"
+                            : "bg-black/5 dark:bg-white/10 text-text-muted"
+                        }`}
+                        title={`Đã gán cho ${pool.providerBoundCount || 0} tài khoản trong provider này`}
+                      >
+                        {pool.providerBoundCount || 0}
+                      </span>
+                    </button>
                   ))}
                 </div>
               )}
@@ -273,7 +300,7 @@ function AddApiKeyModal({ isOpen, provider, providerName, proxyPools, onSave, on
           <input type="number" className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary" value={formData.priority} onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value) || 1 })} />
         </div>
         <Select label="Proxy Pool" value={formData.proxyPoolId} onChange={(e) => setFormData({ ...formData, proxyPoolId: e.target.value })}
-          options={[{ value: NONE, label: "None" }, ...(proxyPools || []).map((p) => ({ value: p.id, label: p.name }))]} />
+          options={[{ value: NONE, label: "None" }, ...(proxyPools || []).map((p) => ({ value: p.id, label: `${p.name} (${p.providerBoundCount || 0})` }))]} />
         <div className="flex gap-2">
           <Button onClick={handleSubmit} fullWidth disabled={!formData.name || !formData.apiKey || saving}>
             {saving ? "Saving..." : "Save"}
@@ -298,7 +325,11 @@ AddApiKeyModal.propTypes = {
 // Self-contained card: fetches, displays and manages all connections for a provider.
 export default function ConnectionsCard({ providerId, isOAuth, loginProviderId = null }) {
   const [connections, setConnections] = useState([]);
-  const [proxyPools, setProxyPools] = useState([]);
+  const [rawProxyPools, setProxyPools] = useState([]);
+  const proxyPools = rawProxyPools.map((pool) => ({
+    ...pool,
+    providerBoundCount: connections.filter((c) => (c.providerSpecificData?.proxyPoolId || null) === pool.id).length,
+  }));
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);

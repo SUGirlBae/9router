@@ -83,6 +83,11 @@ export default {
 
     const chatBody = {
       contents: [{ role: "user", parts }],
+      ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
+      ...(body.top_p !== undefined ? { top_p: body.top_p } : {}),
+      ...(body.top_k !== undefined ? { top_k: body.top_k } : {}),
+      ...(body.seed !== undefined ? { seed: body.seed } : {}),
+      ...(body.max_tokens !== undefined ? { max_tokens: body.max_tokens } : {}),
     };
 
     const result = await executor.execute({

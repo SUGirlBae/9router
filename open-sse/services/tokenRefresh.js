@@ -137,8 +137,8 @@ function vertexRefreshHandler(c, log) {
 }
 
 const REFRESH_HANDLERS = {
-  "gemini-cli": (c, log) => refreshGoogleToken(c.refreshToken, PROVIDERS["gemini-cli"].clientId, PROVIDERS["gemini-cli"].clientSecret, log),
-  antigravity: (c, log) => refreshGoogleToken(c.refreshToken, PROVIDERS.antigravity.clientId, PROVIDERS.antigravity.clientSecret, log),
+  "gemini-cli": (c, log) => refreshGoogleToken(c.refreshToken, PROVIDERS["gemini-cli"].clientId, PROVIDERS["gemini-cli"].clientSecret, log, c?.providerSpecificData || c?.proxyOptions || null),
+  antigravity: (c, log) => refreshGoogleToken(c.refreshToken, PROVIDERS.antigravity.clientId, PROVIDERS.antigravity.clientSecret, log, c?.providerSpecificData || c?.proxyOptions || null),
   claude: (c, log) => refreshClaudeOAuthToken(c.refreshToken, log),
   codex: (c, log) => refreshCodexToken(c.refreshToken, log),
   iflow: (c, log) => refreshIflowToken(c.refreshToken, log),

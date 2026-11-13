@@ -4,6 +4,49 @@ const fs = require("fs");
 const crypto = require("crypto");
 const { pathToFileURL } = require("url");
 
+// Integrated Zero-Downtime Rolling Gateway supervisor:
+// When launched directly by cli.js on the main port (20128), act as the Master Gate
+// that permanently holds port 20128 and routes to Blue/Green worker slots (20131/20132).
+// Workers are spawned with NINE_ROUTER_GATEWAY_MANAGED=1 and boot Next.js directly.
+if (
+  require.main === module &&
+  process.env.NINE_ROUTER_GATEWAY_MANAGED !== "1" &&
+  process.env.NINE_ROUTER_DISABLE_GATEWAY !== "1" &&
+  Number(process.env.PORT || 20128) === 20128
+) {
+  const gwCandidates = [
+    path.join(__dirname, "customizations", "gateway", "9r-zero-downtime-gateway.js"),
+    "C:/Users/Administrator/AppData/Roaming/9router/runtime/9r-zero-downtime-gateway.js"
+  ];
+  const gwPath = gwCandidates.find((p) => fs.existsSync(p));
+  if (gwPath) {
+    const { ZeroDowntimeGateway } = require(gwPath);
+    const gw = new ZeroDowntimeGateway({
+      port: Number(process.env.PORT || 20128),
+      host: process.env.HOSTNAME || "0.0.0.0",
+      serverPath: __filename
+    });
+    const shutdown = async () => {
+      await gw.close();
+      process.exit(0);
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    gw.booting = true;
+    gw.listen().then(() => {
+      gw.spawnWorkerForSlot("A", gw.slotAPort);
+      gw.checkSlotHealth(gw.slotAPort, 45000).then((ok) => {
+        gw.booting = false;
+        if (ok) gw.flushBufferQueue();
+      });
+    }).catch((err) => {
+      console.error("[ZeroDowntimeGateway] Fatal boot error:", err);
+      process.exit(1);
+    });
+    return;
+  }
+}
+
 const origCreate = http.createServer.bind(http);
 
 // Per-process secret proving x-9r-real-ip was stamped below rather than sent by the client.
@@ -70,6 +113,15 @@ http.createServer = (...args) => {
     req.headers["x-9r-real-ip"] = ip;
     req.headers["x-9r-peer-token"] = PEER_TOKEN;
     if (viaProxy) req.headers["x-9r-via-proxy"] = "1";
+
+    const origSetHeader = res.setHeader.bind(res);
+    res.setHeader = (key, val) => {
+      if (typeof key === "string" && key.toLowerCase() === "cache-control" && typeof val === "string" && val.includes("immutable")) {
+        return origSetHeader(key, "no-cache, must-revalidate");
+      }
+      return origSetHeader(key, val);
+    };
+
     return handler(req, res);
   };
   const server = origCreate(...rest, wrapped);

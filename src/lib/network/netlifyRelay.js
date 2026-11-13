@@ -26,7 +26,43 @@ export const NETLIFY_FUNCTION_PATH = "/.netlify/functions/relay";
 // cannot-unmarshal-object-into-Go-struct-field (502).
 // Response shape mirrors the Vercel/Cloudflare/Deno relays: relay headers
 // stripped, status/body passed through.
-export const NETLIFY_RELAY_FUNCTION_CODE = `exports.handler = async (event) => {
+export const NETLIFY_RELAY_FUNCTION_CODE = `// Netlify relay — FIXED: strip identifying/proxy headers & prefixes (cf-*, x-nf-*, x-forwarded-*).
+const STRIP_PREFIXES = [
+  "cf-",
+  "x-vercel-",
+  "x-nf-",
+  "netlify-",
+  "x-forwarded-",
+  "x-amzn-",
+];
+const STRIP_EXACT = new Set([
+  "x-relay-target",
+  "x-relay-path",
+  "host",
+  "forwarded",
+  "via",
+  "cdn-loop",
+  "x-real-ip",
+  "x-client-ip",
+  "x-cluster-client-ip",
+  "true-client-ip",
+  "x-country",
+  "traceparent",
+  "tracestate",
+  "logs-url",
+  "x-invocation-id",
+  "x-middleware-subrequest",
+]);
+function shouldStrip(name) {
+  const lower = String(name).toLowerCase();
+  if (STRIP_EXACT.has(lower)) return true;
+  for (const p of STRIP_PREFIXES) {
+    if (lower.startsWith(p)) return true;
+  }
+  return false;
+}
+
+exports.handler = async (event) => {
   const headers = {};
   for (const [k, v] of Object.entries(event.headers || {})) {
     headers[k.toLowerCase()] = v;
@@ -44,11 +80,10 @@ export const NETLIFY_RELAY_FUNCTION_CODE = `exports.handler = async (event) => {
   }
 
   const targetUrl = target.replace(/\\/$/, "") + relayPath;
-  const forwardHeaders = { ...event.headers };
-  for (const k of Object.keys(forwardHeaders)) {
-    const lower = k.toLowerCase();
-    if (lower === "x-relay-target" || lower === "x-relay-path" || lower === "host") {
-      delete forwardHeaders[k];
+  const forwardHeaders = {};
+  for (const [k, v] of Object.entries(event.headers || {})) {
+    if (v !== undefined && !shouldStrip(k)) {
+      forwardHeaders[k] = v;
     }
   }
 

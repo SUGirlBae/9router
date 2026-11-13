@@ -1,6 +1,9 @@
 const fs = require("fs");
+const path = require("path");
 
-const CHUNK = "C:/Users/Administrator/AppData/Roaming/npm/node_modules/9router/app/.next-cli-build/server/chunks/5330.js";
+const rootIdx = process.argv.indexOf("--root");
+const ROOT = process.env.NINEROUTER_ROOT || (rootIdx !== -1 && process.argv[rootIdx + 1]) || "C:/Users/Administrator/AppData/Roaming/npm/node_modules/9router";
+const CHUNK = path.join(ROOT, "app/.next-cli-build/server/chunks/5330.js");
 
 // qoder resolves models by exact catalog key; a trailing effort tag like "qfmodel(high)"
 // or "qfmodel[1m]" never matches, so strip every trailing tag before lookup. One combined

@@ -6,7 +6,7 @@
 // web session). A probe answers three things — ok / rejected / unknown — so a
 // flaky network never flips a healthy connection to "error".
 import https from "node:https";
-import { extractCookieValue, normalizeSessionCookieHeader } from "../utils/webCookieAuth.js";
+import { extractCookieValue, normalizeSessionCookieHeader, normalizeCookieHeaderInput } from "../utils/webCookieAuth.js";
 import { normalizeGeminiValidationCookie } from "../utils/geminiCookies.js";
 import { grokTlsFetch, GROK_TLS_USER_AGENT } from "./grokTlsClient.js";
 
@@ -157,6 +157,11 @@ const PROBES = {
   },
 
   async "muse-web"(credential) {
+    try {
+      credential = normalizeCookieHeaderInput(credential);
+    } catch (error) {
+      return REJECTED(error.message);
+    }
     if (!cookieJar(credential).get("hatch_sess")) return REJECTED("Missing hatch_sess cookie");
     const res = await request("https://muse.ai/api/session", {
       headers: { Cookie: credential, Accept: "application/json", Origin: "https://muse.ai", Referer: "https://muse.ai/thread/new" },
@@ -208,6 +213,16 @@ const PROBES = {
     return OK(email.includes("@") ? email : "");
   },
 
+  async "qwen-web"(credential) {
+    let token = String(credential || "").trim();
+    try {
+      const parsed = JSON.parse(token);
+      if (typeof parsed?.value === "string") token = parsed.value;
+    } catch {}
+    if (!token || token.length < 20) return REJECTED("Missing or invalid token");
+    const payload = decodeJwtPayload(token);
+    return OK(payload?.id ? `qwen-${payload.id.slice(0, 8)}` : "qwen-user");
+  },
 
 };
 
