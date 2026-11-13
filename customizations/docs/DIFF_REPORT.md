@@ -22,7 +22,7 @@ Bản fork custom (`20130`): `C:\Users\Administrator\AppData\Roaming\npm\node_mo
 - `src/mitm/{antigravityIdeVersion.js, manager.js, server.js, telemetrySinkhole.js [NEW]}`: MITM sinkhole (`x-9router-sinkhole`), bỏ `setx NODE_EXTRA_CA_CERTS` (chỉ dọn bằng `reg delete`).
 
 ### B. Egress Filtering, Hop Sanitization & Relay IP-Stripping
-- `open-sse/utils/ingressHeaderSanitizer.js` **[NEW]** + `open-sse/handlers/chatCore.js`: xóa sạch `x-forwarded-*`, `x-real-ip`, `forwarded`, `via`, `cf-*`, `cdn-loop`, `x-9r-*`, `x-request-id`, `x-connection-id`, và `User-Agent` của hop `20128` (`undici`/`node`/`9router`) khỏi `credentials.rawHeaders`.
+- `open-sse/utils/ingressHeaderSanitizer.js` **[NEW]** + `open-sse/handlers/chatCore.js`: xóa sạch `x-forwarded-*`, `x-real-ip`, `forwarded`, `via`, `cf-*`, `cdn-loop`, `x-9r-*`, `x-azure-*`, `x-fastly-*`, `akamai-*`, `x-render-*`, `x-deno-*`, `x-request-id`, `x-connection-id`, các header cache/trace (`x-cache`, `x-varnish`, `fly-request-id`, ...) và `User-Agent` của hop `20128` (`undici`/`node`/`9router`) khỏi `credentials.rawHeaders`; tên header được lowercase hóa, value array giữ nguyên, `authorization`/`x-api-key` được bảo toàn.
 - `open-sse/utils/proxyFetch.js`: **`pre-ecdh`** — `NINEROUTER_TLS_ECDH_CURVE || "X25519:P-256:P-384"`.
 - `src/lib/network/netlifyRelay.js`, `src/app/api/proxy-pools/{cloudflare,vercel,netlify,deno}-deploy/route.js`: **`pre-netlifyfix` / `pre-cfdeploy` / `pre-visibility`** — `STRIP_PREFIXES` + `STRIP_EXACT`, `strictProxy: true`, `sso_login: false` & phát hiện Netlify Private `401`.
 - `src/app/api/proxy-pools/{route.js, [id]/route.js}`: tự nhận diện `type` (`netlify`/`cloudflare`/`vercel`/`deno`) từ `proxyUrl`.
@@ -35,11 +35,12 @@ Bản fork custom (`20130`): `C:\Users\Administrator\AppData\Roaming\npm\node_mo
 - `open-sse/providers/registry/qwen-web.js` **[NEW]**, `open-sse/executors/{deepseek-web.js, muse-web/session.js}`, `open-sse/services/{webIdentity.js, webLoginConfig.js}`, `src/shared/utils/providerIcon.js`, `src/app/(dashboard)/dashboard/providers/components/WebLoginButton.js`.
 - `src/app/(dashboard)/dashboard/providers/[id]/{page.js, ConnectionRow.js, AddApiKeyModal.js}` & `components/ConnectionsCard.js`: **`pre-proxydropdown`** (`providerBoundCount`, badge + tooltip, `overscroll-contain`, `onWheel stopPropagation`), universal *Fetch Models*.
 - `src/app/api/models/test/ping.js`, `src/app/api/providers/[id]/models/route.js`, `src/app/api/providers/[id]/test/testUtils.js`: timeout 60s, static models fallback.
-- `src/lib/tunnel/{cloudflare,tailscale}/manager.js`: đọc `Number(process.env.PORT) || 20128` thay vì hardcode `20128`.
+- `src/lib/tunnel/{cloudflare,tailscale}/manager.js`: đọc `TUNNEL_LOCAL_PORT || PORT || 20128` thay vì hardcode `20128` (gateway worker slot có PORT riêng nhưng tunnel phải bám port gateway).
 
 ## 3. Các patch runtime chỉ áp dụng sau bước Next build (`customizations/patches/`)
 1. `patch-9r-qd-suffix.js` (`qd/` normalize + suffix strip cho Qoder)
 2. `patch-9r-qoduck.js` (`qoduck` → `lmodel` 1M context + reasoning effort)
 3. `patch-9r-qwen-web.js`, `patch-9r-kimi-web.js`, `patch-9r-weblogin-map.js`, `reinstall-muse-executor.js` (nối driver webchat qua `%APPDATA%\9router-fork\runtime\9r-net-keeper.js`)
-4. `sha3_wasm_bg.wasm` copy vào `app/open-sse/lib/`
-5. Cô lập vỏ `9router-fork` (`package.json`, `cli.js`, `src/cli/tray/autostart.js`, `src/cli/api/client.js`) cho cổng `20130` & `DATA_DIR=%APPDATA%\9router-fork`.
+4. `patch-9r-fork-kill-scope.js` — giới hạn kill của `/api/version/{shutdown,update}` về `9router-fork`, bỏ giết cloudflared toàn cục, đọc `.mitm.pid` trong DATA_DIR fork
+5. `sha3_wasm_bg.wasm` copy vào `app/open-sse/lib/`
+6. Cô lập vỏ `9router-fork` (`package.json`, `cli.js`, `src/cli/tray/autostart.js`, `src/cli/api/client.js`) cho cổng `20130` & `DATA_DIR=%APPDATA%\9router-fork`.

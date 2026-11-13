@@ -21,7 +21,13 @@ function throwIfCancelled(token) {
   if (token.cancelled) throw new Error("tailscale cancelled");
 }
 
-export async function enableTailscale(localPort = Number(process.env.PORT) || 20128) {
+// TUNNEL_LOCAL_PORT wins over PORT: gateway worker slots get their own PORT while
+// the funnel must stay bound to the gateway's public port.
+function defaultLocalPort() {
+  return Number(process.env.TUNNEL_LOCAL_PORT) || Number(process.env.PORT) || 20128;
+}
+
+export async function enableTailscale(localPort = defaultLocalPort()) {
   console.log(`[Tailscale] enable start (port=${localPort})`);
   svc.cancelToken = { cancelled: false };
   svc.activeLocalPort = localPort;

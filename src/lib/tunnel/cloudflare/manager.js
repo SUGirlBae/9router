@@ -31,7 +31,13 @@ function throwIfCancelled(token) {
   if (token.cancelled) throw new Error("tunnel cancelled");
 }
 
-export async function enableTunnel(localPort = Number(process.env.PORT) || 20128) {
+// TUNNEL_LOCAL_PORT wins over PORT: the zero-downtime gateway sets PORT per worker
+// slot (20131/20132), but the public tunnel must keep pointing at the gateway port.
+function defaultLocalPort() {
+  return Number(process.env.TUNNEL_LOCAL_PORT) || Number(process.env.PORT) || 20128;
+}
+
+export async function enableTunnel(localPort = defaultLocalPort()) {
   console.log(`[Tunnel] enable start (port=${localPort})`);
   svc.cancelToken = { cancelled: false };
   svc.activeLocalPort = localPort;

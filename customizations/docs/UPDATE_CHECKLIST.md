@@ -6,14 +6,19 @@
 
 ## A. Cập nhật bản gốc `20128` (`9router`) — KHÔNG ảnh hưởng `20130`
 
-- [ ] **A1. Đảm bảo `20130` (`9router-fork`) đang khỏe** (vì `20128` trỏ qua `20130` và backup `womtech.io.vn`):
+- [ ] **A0. TUYỆT ĐỐI KHÔNG dùng nút Update/Shutdown trên dashboard `20128`.** Route
+  `/api/version/{update,shutdown}` của bản gốc không vá được và sẽ kill mọi tiến trình
+  `9router|next-server|cli.js` cùng **toàn bộ** `cloudflared.exe` trên máy (chết cả `20130`
+  và cả hai tunnel). Chỉ dừng `20128` bằng **tray icon → Exit**.
+- [ ] **A1. Đảm bảo `20130` (`9router-fork`) đang khỏe**:
   ```powershell
   curl.exe -s http://127.0.0.1:20130/api/health
+  curl.exe -s https://rb54hwc.abc-tunnel.us/api/health
   ```
 - [ ] **A2. Backup DB `20128` trước khi cập nhật** (nếu cần): chỉ rename/copy thành `.bak-*`, không xóa.
-- [ ] **A3. Cập nhật bản gốc sạch từ npm**:
+- [ ] **A3. Dừng instance 20128 rồi cập nhật bản gốc**:
   ```powershell
-  # Nếu đang chạy 20128, tắt đúng process 20128 (nhờ tray Exit hoặc PID file) trước để tránh EBUSY
+  # Tắt đúng 20128 bằng tray Exit (hoặc /api/version/shutdown CHỈ khi chấp nhận fork sẽ chết theo)
   npm i -g 9router@latest --prefer-online
   9router --tray --skip-update
   ```
@@ -23,6 +28,13 @@
   curl.exe -s http://127.0.0.1:20130/api/health
   curl.exe -s https://rb54hwc.abc-tunnel.us/api/health
   ```
+- [ ] **A5. Kiểm tra secret đã tách** (mỗi instance phải có `jwt-secret` và `auth\cli-secret` riêng):
+  ```powershell
+  (Get-FileHash "$env:APPDATA\9router\jwt-secret").Hash -ne (Get-FileHash "$env:APPDATA\9router-fork\jwt-secret").Hash
+  (Get-FileHash "$env:APPDATA\9router\auth\cli-secret").Hash -ne (Get-FileHash "$env:APPDATA\9router-fork\auth\cli-secret").Hash
+  ```
+  Nếu trùng: xoá `%APPDATA%\9router-fork\jwt-secret` + `%APPDATA%\9router-fork\auth\cli-secret`,
+  restart `9router-fork` (file mới tự sinh), rồi đăng nhập lại dashboard 20130.
 
 ---
 
@@ -49,8 +61,10 @@
   - [ ] `patch-9r-qd-suffix.js`
   - [ ] `patch-9r-qoduck.js`
   - [ ] `patch-9r-qwen-web.js --apply`, `patch-9r-kimi-web.js --apply`, `patch-9r-weblogin-map.js --apply`, `reinstall-muse-executor.js`
+  - [ ] **`patch-9r-fork-kill-scope.js`** — bắt buộc, nếu không fork sẽ tự kill lẫn `20128`/cloudflared qua `/api/version/{shutdown,update}`
   - [ ] Copy `sha3_wasm_bg.wasm` vào `app/open-sse/lib/`
   - [ ] Giữ nguyên vỏ cô lập `9router-fork` (`package.json`, `cli.js`, `src/cli/tray/autostart.js`, `src/cli/api/client.js`)
+  - [ ] Kiểm tra tunnel nhận port động: bundle phải chứa `TUNNEL_LOCAL_PORT` (gateway worker slot KHÔNG được kéo tunnel về 20131/20132)
 - [ ] **B4. Chạy bộ kiểm thử bắt buộc TRƯỚC khi thay `9router-fork/app`**:
   ```bash
   node --test D:/9router/tests/unit/fork-launcher-isolation.test.js

@@ -6,6 +6,11 @@ const STRIP_PREFIXES = [
   "x-vercel-",
   "x-amzn-",
   "x-9r-",
+  "x-azure-",
+  "x-fastly-",
+  "akamai-",
+  "x-render-",
+  "x-deno-",
 ];
 
 const STRIP_EXACT = new Set([
@@ -30,6 +35,15 @@ const STRIP_EXACT = new Set([
   "x-middleware-subrequest",
   "x-request-id",
   "x-connection-id",
+  // CDN/edge cache + request-trace headers (Cloudflare, Fastly, Varnish, Fly, Deno)
+  "x-cache",
+  "x-cache-hits",
+  "x-served-by",
+  "x-timer",
+  "x-varnish",
+  "x-fastly-request-id",
+  "fly-request-id",
+  "x-client-trace-id",
 ]);
 
 const HOP_RUNTIME_UA_RE = /^(?:undici|node(?:-fetch)?|axios|got|9router)(?:\/|\s|$)/i;

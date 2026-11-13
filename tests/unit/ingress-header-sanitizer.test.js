@@ -42,6 +42,34 @@ test("strips proxy, tunnel, hop, 9router-internal, and hop runtime User-Agent he
   assert.equal(out["content-type"], "application/json");
 });
 
+test("strips third-party CDN/edge cache and request-trace headers", () => {
+  const out = sanitizeIngressHeaders({
+    "x-cache": "Hit from cloudfront",
+    "x-cache-hits": "1",
+    "x-served-by": "cache-fra-egr1",
+    "x-timer": "S123.456",
+    "x-varnish": "12345",
+    "x-fastly-request-id": "abc",
+    "fly-request-id": "01J",
+    "x-client-trace-id": "trace",
+    "x-azure-ref": "2026",
+    "akamai-grn": "0.1",
+    "x-render-origin-server": "render",
+    "x-deno-ray": "ray",
+    "x-nf-request-id": "nf",
+    "x-vercel-id": "fra1::abc",
+    "anthropic-beta": "context-1m-2025-08-07",
+  });
+  for (const k of [
+    "x-cache", "x-cache-hits", "x-served-by", "x-timer", "x-varnish",
+    "x-fastly-request-id", "fly-request-id", "x-client-trace-id", "x-azure-ref",
+    "akamai-grn", "x-render-origin-server", "x-deno-ray", "x-nf-request-id", "x-vercel-id",
+  ]) {
+    assert.equal(out[k], undefined, `expected ${k} to be stripped`);
+  }
+  assert.equal(out["anthropic-beta"], "context-1m-2025-08-07");
+});
+
 test("preserves legitimate client user-agent like claude-cli or opencode", () => {
   const out = sanitizeIngressHeaders({
     "user-agent": "claude-cli/2.1.0 (external, cli)",
@@ -49,4 +77,44 @@ test("preserves legitimate client user-agent like claude-cli or opencode", () =>
   });
   assert.equal(out["user-agent"], "claude-cli/2.1.0 (external, cli)");
   assert.equal(out["anthropic-beta"], "context-1m-2025-08-07");
+});
+
+test("normalizes header names to lowercase so downstream lookups keep working", () => {
+  // open-sse/executors/default.js reads rawHeaders["anthropic-beta"] (exact key),
+  // cursor.js reads rawHeaders["user-agent"] — casing must not survive.
+  const out = sanitizeIngressHeaders({
+    "Anthropic-Beta": "context-1m-2025-08-07",
+    "User-Agent": "opencode/latest/2.0.29/desktop",
+    "X-Session-Id": "sess-upper",
+    "Content-Type": "application/json",
+  });
+  assert.equal(out["Anthropic-Beta"], undefined);
+  assert.equal(out["anthropic-beta"], "context-1m-2025-08-07");
+  assert.equal(out["user-agent"], "opencode/latest/2.0.29/desktop");
+  assert.equal(out["x-session-id"], "sess-upper");
+  assert.equal(out["content-type"], "application/json");
+});
+
+test("keeps array header values intact instead of dropping them", () => {
+  const out = sanitizeIngressHeaders({
+    "x-session-id": ["a", "b"],
+    "anthropic-beta": "context-1m-2025-08-07",
+  });
+  assert.deepEqual(out["x-session-id"], ["a", "b"]);
+});
+
+test("does not confuse x-9router-token-saver with the x-9r- internal prefix", () => {
+  const out = sanitizeIngressHeaders({
+    "x-9router-token-saver": "off",
+    "x-9r-cli-token": "secret",
+  });
+  assert.equal(out["x-9router-token-saver"], "off");
+  assert.equal(out["x-9r-cli-token"], undefined);
+});
+
+test("handles null/undefined/non-object input without throwing", () => {
+  assert.deepEqual(sanitizeIngressHeaders(null), {});
+  assert.deepEqual(sanitizeIngressHeaders(undefined), {});
+  assert.deepEqual(sanitizeIngressHeaders("nope"), {});
+  assert.deepEqual(sanitizeIngressHeaders({ "x-cache": null }), {});
 });
