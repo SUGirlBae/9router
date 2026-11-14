@@ -69,3 +69,6 @@ Trên `20128` (bản gốc, không được sửa) thì KHÔNG vá được. Vì
   `npm i -g 9router@latest --prefer-online`, rồi mở lại `9router`.
 - Nếu fork đã bị giết nhầm: mở lại bằng `9router-fork` (dashboard 20130 → Tunnel → Enable nếu cần).
 - Không bật **MITM** trên `20128`: cả hai instance dùng chung cổng MITM mặc định, sẽ tranh chấp.
+- `POST /api/tunnel/enable` trả `500 {"error":"Health check timeout after 60000ms"}` là **bình thường** khi
+  DNS public chưa kịp propagate: kiểm tra `GET /api/tunnel/status` thấy `running:true` và gọi
+  `https://<shortId>.abc-tunnel.us/api/health` trả `200` là tunnel đã sống, không cần enable lại.
