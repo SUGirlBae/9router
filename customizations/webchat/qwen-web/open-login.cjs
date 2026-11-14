@@ -102,6 +102,19 @@ function saveTokenToDb(token) {
       const validToken = extractValidToken(tokenState?.token || null);
       if (validToken) {
         console.log(`[qwen-login] Login detected! Token length=${validToken.length}. Saving to database...`);
+        // Persist the freshly logged-in cookies so the headless pool starts from a
+        // live refresh_token instead of the revoked copy it may still hold.
+        const statePath =
+          process.env.QWEN_STORAGE_STATE_PATH ||
+          (process.env.DATA_DIR ? path.join(process.env.DATA_DIR, "qwen-storage-state.json") : null);
+        if (statePath) {
+          try {
+            await ctx.storageState({ path: statePath });
+            console.log(`[qwen-login] storage_state refreshed: ${statePath}`);
+          } catch (e) {
+            console.log(`[qwen-login] storage_state write failed: ${e.message}`);
+          }
+        }
         saveTokenToDb(validToken);
         await new Promise((r) => setTimeout(r, 1500));
         await ctx.close();
