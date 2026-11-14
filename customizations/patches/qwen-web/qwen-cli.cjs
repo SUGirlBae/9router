@@ -73,13 +73,14 @@ function inspectStorageState(statePath = DEFAULT_STORAGE_STATE) {
   details.cookie_domains = [...new Set(cookies.map((c) => c.domain))];
   checks.cookies_present = cookies.some((c) => String(c.domain).includes("qwen.ai"));
 
-  const qwenOrigin = (state.origins || []).find((o) => String(o.origin).includes("qwen.ai"));
-  const tokEntry = (qwenOrigin?.localStorage || []).find((x) => x.name === "token");
-  if (tokEntry?.value && tokEntry.value.length >= 20) {
+  const { pickQwenToken } = require("./desktop-identity.cjs");
+  const picked = pickQwenToken(state.origins || []);
+  if (picked?.token && picked.token.length >= 20) {
     checks.token_present = true;
-    details.token_length = tokEntry.value.length;
-    details.token_exp = parseJwtExp(tokEntry.value);
-    details.token_value = tokEntry.value;
+    details.token_length = picked.token.length;
+    details.token_exp = parseJwtExp(picked.token);
+    details.token_source = picked.source;
+    details.token_value = picked.token;
   }
 
   const ok = checks.storage_exists && checks.json_valid && checks.cookies_present && checks.token_present;
@@ -136,20 +137,30 @@ async function cmdAuthCheck(args) {
         executablePath: CHROME,
         args: ["--disable-blink-features=AutomationControlled"],
       });
-      const ctx = await browser.newContext({ storageState: DEFAULT_STORAGE_STATE });
+      const { desktopContextOptions, applyDesktopClientHints, refreshDesktopClientHints, readQwenTokenFromPage } = require("./desktop-identity.cjs");
+      const ctx = await browser.newContext(desktopContextOptions({ storageState: DEFAULT_STORAGE_STATE }));
       const page = await ctx.newPage();
+      await applyDesktopClientHints(page);
       await page.goto("https://chat.qwen.ai/", { waitUntil: "domcontentloaded", timeout: 30000 });
-      await page.waitForFunction(() => !!localStorage.getItem("token"), { timeout: 8000 }).catch(() => {});
-      const netCheck = await page.evaluate(async () => {
-        const tok = localStorage.getItem("token");
-        if (!tok) return { ok: false, reason: "no_token_in_localStorage" };
-        const r = await fetch("/api/v2/users/status", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
-        });
-        const j = await r.json().catch(() => ({}));
-        return { ok: r.ok && j.data === true, status: r.status, body: j, token: tok };
-      });
+      await refreshDesktopClientHints(page);
+      const tokenState = await readQwenTokenFromPage(page);
+      const netCheck = await page.evaluate(
+        async ({ tok, appVersion }) => {
+          if (!tok) return { ok: false, reason: "no_token_in_store" };
+          const r = await fetch("/api/v2/users/status", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${tok}`,
+              "Content-Type": "application/json",
+              Version: appVersion,
+              source: "desktop",
+            },
+          });
+          const j = await r.json().catch(() => ({}));
+          return { ok: r.ok && j.data === true, status: r.status, body: j, token: tok };
+        },
+        { tok: tokenState?.token || null, appVersion: "0.3.42" }
+      );
       report.checks.token_fetch = netCheck.ok === true;
       if (netCheck.ok && netCheck.token) {
         await ctx.storageState({ path: DEFAULT_STORAGE_STATE });

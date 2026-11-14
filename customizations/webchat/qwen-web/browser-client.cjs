@@ -17,6 +17,15 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execSync } = require("node:child_process");
 const { resolveQwenAgentOptions, formatMessagesForUiPrompt } = require("./qwen-tools.cjs");
+const {
+  desktopContextOptions,
+  installDesktopIdentity,
+  applyDesktopClientHints,
+  refreshDesktopClientHints,
+  pickQwenToken,
+  readQwenTokenFromPage,
+  captureChatRequest,
+} = require("./desktop-identity.cjs");
 
 const PW_PATH = process.env.PLAYWRIGHT_PATH || "C:/Users/Administrator/.9router/runtime/node_modules/playwright-core";
 const CHROME = process.env.CHROME_PATH || "C:/Program Files/Google/Chrome/Application/chrome.exe";
@@ -72,12 +81,16 @@ function cleanupProfileLock(profilePath, force = false) {
 async function syncStorageStateFromProfile(profilePath = DEFAULT_PROFILE, statePath = DEFAULT_STORAGE_STATE) {
   const pw = require(PW_PATH);
   cleanupProfileLock(profilePath);
-  const ctx = await pw.chromium.launchPersistentContext(profilePath, {
-    headless: true,
-    executablePath: CHROME,
-    args: ["--disable-blink-features=AutomationControlled"],
-  });
+  const ctx = await pw.chromium.launchPersistentContext(
+    profilePath,
+    desktopContextOptions({
+      headless: true,
+      executablePath: CHROME,
+      args: ["--disable-blink-features=AutomationControlled"],
+    })
+  );
   try {
+    await installDesktopIdentity(ctx);
     const page = ctx.pages()[0] || (await ctx.newPage());
     await page.goto("https://chat.qwen.ai/", { waitUntil: "domcontentloaded", timeout: 30000 });
     await page.waitForFunction(() => !!localStorage.getItem("token"), { timeout: 10000 }).catch(() => {});
@@ -197,10 +210,13 @@ class QwenBrowserPool {
         executablePath: CHROME,
         args: ["--disable-blink-features=AutomationControlled"],
       });
-      const ctx = await this.browser.newContext({
-        storageState: this.storageStatePath,
-        viewport: { width: 1280, height: 800 },
-      });
+      const ctx = await this.browser.newContext(
+        desktopContextOptions({
+          storageState: this.storageStatePath,
+          viewport: { width: 1280, height: 800 },
+        })
+      );
+      await installDesktopIdentity(ctx);
       const origClose = ctx.close.bind(ctx);
       const browserRef = this.browser;
       ctx.close = async () => {
@@ -218,11 +234,16 @@ class QwenBrowserPool {
     cleanupProfileLock(profilePath);
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        return await pw.chromium.launchPersistentContext(profilePath, {
-          headless: true,
-          executablePath: CHROME,
-          args: ["--disable-blink-features=AutomationControlled"],
-        });
+        const persistent = await pw.chromium.launchPersistentContext(
+          profilePath,
+          desktopContextOptions({
+            headless: true,
+            executablePath: CHROME,
+            args: ["--disable-blink-features=AutomationControlled"],
+          })
+        );
+        await installDesktopIdentity(persistent);
+        return persistent;
       } catch (err) {
         if (attempt === 1) {
           cleanupProfileLock(profilePath, true);
@@ -245,16 +266,40 @@ class QwenBrowserPool {
     this.profilePath = profilePath;
     this.ctx = await this._launchContext(profilePath, timeoutMs);
     this.page = this.ctx.pages()[0] || (await this.ctx.newPage());
+    // Complete the desktop identity before the app boots: Playwright's UA override alone
+    // leaves sec-ch-ua* / navigator.userAgentData reporting the host Chrome build.
+    await applyDesktopClientHints(this.page);
     await this.page.goto("https://chat.qwen.ai/", { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    // Playwright re-issues its own UA override during navigation; restore Chromium-134 hints.
+    await refreshDesktopClientHints(this.page);
     try {
       await this.page.waitForFunction(
-        () => !!localStorage.getItem("token") && !!document.querySelector("textarea"),
+        () => {
+          try {
+            const raw = localStorage.getItem("qwen_access_token_state");
+            if (raw) {
+              const s = JSON.parse(raw);
+              if (s && s.version === 1 && typeof s.token === "string" && s.token.length > 0) return true;
+            }
+            const legacy = localStorage.getItem("token");
+            const exp = Number(localStorage.getItem("at_expire_time"));
+            return !!legacy && Number.isFinite(exp) && exp > 0;
+          } catch {}
+          return false;
+        },
         { timeout: 12000 }
       );
       // Allow Baxia anti-bot SDK (tfstk__ / isg__) to finish initial hydration on cold start
       await new Promise((r) => setTimeout(r, 2000));
     } catch {
       await new Promise((r) => setTimeout(r, 2500));
+    }
+    // The app rotates refresh cookies on every boot (/auths/refresh). Persist the
+    // rotated jar even when no chat stream follows, otherwise the next launch
+    // presents a revoked refresh_token.
+    await new Promise((r) => setTimeout(r, 1500));
+    if (this.storageStatePath) {
+      await this.ctx.storageState({ path: this.storageStatePath }).catch(() => {});
     }
     return { ctx: this.ctx, page: this.page, reused: false };
   }
@@ -354,9 +399,21 @@ async function ensureUiModes(page, { thinkingEnabled, searchEnabled } = {}) {
 }
 
 async function submitPromptViaQwenUI(page, promptText, reused, uiModes = {}) {
-  const hasToken = await page.evaluate(() => !!localStorage.getItem("token"));
-  if (!hasToken) {
-    return { noToken: true };
+  const tokenState = await readQwenTokenFromPage(page);
+  if (!tokenState) {
+    // Desktop builds can hold the access token in memory only; ask the app itself.
+    const loggedIn = await page
+      .evaluate(async () => {
+        try {
+          const r = await fetch("/api/v2/users/status", { method: "POST" });
+          const j = await r.json().catch(() => ({}));
+          return r.ok && j && j.data === true;
+        } catch {
+          return false;
+        }
+      })
+      .catch(() => false);
+    if (!loggedIn) return { noToken: true };
   }
 
   // If reusing a warm tab that already has an active conversation, click "New Chat"
@@ -428,6 +485,7 @@ async function doChatViaBrowserStream({
 
   const onRequestPaused = (params) => {
     if (params.request && params.request.url && params.request.url.includes("/api/v2/chat/completions")) {
+      captureChatRequest(params);
       pausedResolver(params);
     } else {
       cdp.send("Fetch.continueRequest", { requestId: params.requestId }).catch(() => {});
@@ -651,10 +709,9 @@ async function refreshTokenViaPool(profilePath = DEFAULT_PROFILE, statePath = DE
       await defaultPool.close();
       if (fs.existsSync(profilePath)) {
         const state = await syncStorageStateFromProfile(profilePath, statePath);
-        const qwenOrigin = (state?.origins || []).find((o) => o.origin.includes("qwen.ai"));
-        const tokEntry = (qwenOrigin?.localStorage || []).find((x) => x.name === "token");
-        if (tokEntry?.value && tokEntry.value.length >= 20) {
-          return { apiKey: tokEntry.value, accessToken: tokEntry.value };
+        const picked = pickQwenToken(state?.origins || []);
+        if (picked?.token && picked.token.length >= 20) {
+          return { apiKey: picked.token, accessToken: picked.token, expiresAt: picked.expiresAt, source: picked.source };
         }
       }
       return null;

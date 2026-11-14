@@ -61,6 +61,7 @@
   - [ ] `patch-9r-qd-suffix.js`
   - [ ] `patch-9r-qoduck.js`
   - [ ] `patch-9r-qwen-web.js --apply`, `patch-9r-kimi-web.js --apply`, `patch-9r-weblogin-map.js --apply`, `reinstall-muse-executor.js`
+  - [ ] **Qwen desktop parity** — `qwen-web/desktop-identity.cjs` phải được deploy cùng driver; giữ nguyên UA `Qwen/1.0.3 Chrome/134.0.6998.179 Electron/35.1.4 … AliDesktop(QWENCHAT/1.0.3)` + client hints Chromium 134 + `window.electronAPI` stub (xem `docs/qwen-web-desktop-parity.md`)
   - [ ] **`patch-9r-fork-kill-scope.js`** — bắt buộc, nếu không fork sẽ tự kill lẫn `20128`/cloudflared qua `/api/version/{shutdown,update}`
   - [ ] Copy `sha3_wasm_bg.wasm` vào `app/open-sse/lib/`
   - [ ] Giữ nguyên vỏ cô lập `9router-fork` (`package.json`, `cli.js`, `src/cli/tray/autostart.js`, `src/cli/api/client.js`)

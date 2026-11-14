@@ -61,16 +61,42 @@ test("strips model suffixes", () => {
   const b = buildRequestBody({ model: "qwen3.7-plus(high)[1m]", messages: [{ role: "user", content: "hi" }] });
   assert.strictEqual(b.model, "qwen3.7-plus");
 });
-test("includes chat_id + incremental when provided", () => {
-  const b = buildRequestBody({ model: "qwen3.7-plus", messages: [], chatId: "abc" });
-  assert.strictEqual(b.chat_id, "abc");
+test("emits the captured 0.3.42 envelope (stream/version/incremental/chat_id/chat_mode)", () => {
+  const b = buildRequestBody({ model: "qwen3.7-plus", messages: [{ role: "user", content: "hi" }], chatId: "abc", now: 1794683996 });
+  assert.strictEqual(b.stream, true);
+  assert.strictEqual(b.version, "2.1");
   assert.strictEqual(b.incremental_output, true);
+  assert.strictEqual(b.chat_id, "abc");
+  assert.strictEqual(b.chatId, "abc");
+  assert.strictEqual(b.parentId, "");
+  assert.strictEqual(b.chat_mode, "normal");
+  assert.strictEqual(b.timestamp, 1794683996);
+  const m = b.messages[0];
+  assert.strictEqual(m.role, "user");
+  assert.strictEqual(m.chat_type, "t2t");
+  assert.strictEqual(m.sub_chat_type, "t2t");
+  assert.strictEqual(m.user_action, "chat");
+  assert.deepStrictEqual(m.models, ["qwen3.7-plus"]);
+  assert.ok(Array.isArray(m.childrenIds) && m.childrenIds.length === 1);
+  assert.strictEqual(m.feature_config.output_schema, "phase");
+  assert.strictEqual(m.feature_config.thinking_format, "summary");
+  assert.deepStrictEqual(m.extra, { meta: { subChatType: "t2t" } });
 });
-test("anti-bot headers present", () => {
+test("thinking/search flags land in feature_config", () => {
+  const b = buildRequestBody({ model: "qwen3.7-plus", messages: [{ role: "user", content: "x" }], thinkingEnabled: true, searchEnabled: true });
+  assert.strictEqual(b.messages[0].feature_config.thinking_enabled, true);
+  assert.strictEqual(b.messages[0].feature_config.auto_search, true);
+});
+test("anti-bot headers match the captured desktop request set", () => {
   const h = generateAntiBotHeaders();
-  assert(h["x-request-id"]);
-  assert(h["bx-v"]);
-  assert(h["user-agent"]);
+  assert.strictEqual(h["X-Request-Id"].length, 36);
+  assert.strictEqual(h["bx-v"], "2.5.37");
+  assert.strictEqual(h.Version, "0.3.42");
+  assert.strictEqual(h.source, "desktop");
+  assert.strictEqual(h.Accept, "application/json");
+  assert.match(h["User-Agent"], /AliDesktop\(QWENCHAT\/1\.0\.3\)$/);
+  assert.match(h["sec-ch-ua"], /"Chromium";v="134"/);
+  assert.ok(h.Timezone);
 });
 
 console.log("== Token validation tests ==");

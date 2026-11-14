@@ -40,7 +40,7 @@ Bản fork custom (`20130`): `C:\Users\Administrator\AppData\Roaming\npm\node_mo
 ## 3. Các patch runtime chỉ áp dụng sau bước Next build (`customizations/patches/`)
 1. `patch-9r-qd-suffix.js` (`qd/` normalize + suffix strip cho Qoder)
 2. `patch-9r-qoduck.js` (`qoduck` → `lmodel` 1M context + reasoning effort)
-3. `patch-9r-qwen-web.js`, `patch-9r-kimi-web.js`, `patch-9r-weblogin-map.js`, `reinstall-muse-executor.js` (nối driver webchat qua `%APPDATA%\9router-fork\runtime\9r-net-keeper.js`)
+3. `patch-9r-qwen-web.js`, `patch-9r-kimi-web.js`, `patch-9r-weblogin-map.js`, `reinstall-muse-executor.js` (nối driver webchat qua `%APPDATA%\9router-fork\runtime\9r-net-keeper.js`); `qwen-web/desktop-identity.cjs` tái tạo đúng identity Qwen.exe 1.0.3 (UA Electron + client hints Chromium 134 + `window.electronAPI` + token store `qwen_access_token_state`) — xem `docs/qwen-web-desktop-parity.md`
 4. `patch-9r-fork-kill-scope.js` — giới hạn kill của `/api/version/{shutdown,update}` về `9router-fork`, bỏ giết cloudflared toàn cục, đọc `.mitm.pid` trong DATA_DIR fork
 5. `sha3_wasm_bg.wasm` copy vào `app/open-sse/lib/`
 6. Cô lập vỏ `9router-fork` (`package.json`, `cli.js`, `src/cli/tray/autostart.js`, `src/cli/api/client.js`) cho cổng `20130` & `DATA_DIR=%APPDATA%\9router-fork`.

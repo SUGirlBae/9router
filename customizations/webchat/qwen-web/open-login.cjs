@@ -14,6 +14,7 @@ const { cleanupProfileLock } = require("./browser-client.cjs");
 
 const PW_PATH = process.env.PLAYWRIGHT_PATH || "C:/Users/Administrator/.9router/runtime/node_modules/playwright-core";
 const CHROME = process.env.CHROME_PATH || "C:/Program Files/Google/Chrome/Application/chrome.exe";
+const { desktopContextOptions, applyDesktopClientHints, refreshDesktopClientHints, readQwenTokenFromPage } = require("./desktop-identity.cjs");
 const PROFILE = process.env.QWEN_BROWSER_PROFILE_PATH || "D:/9router/data/browser-profiles/default";
 const DB_PATH = process.env.QWEN_DB_PATH || "D:/9router/data/db/data.sqlite";
 
@@ -74,14 +75,20 @@ function saveTokenToDb(token) {
   cleanupProfileLock(PROFILE, true);
 
   console.log("[qwen-login] Opening Chrome window at https://chat.qwen.ai/ ...");
-  const ctx = await pw.chromium.launchPersistentContext(PROFILE, {
-    headless: false,
-    executablePath: CHROME,
-    args: ["--disable-blink-features=AutomationControlled"],
-  });
+  const ctx = await pw.chromium.launchPersistentContext(
+    PROFILE,
+    desktopContextOptions({
+      headless: false,
+      executablePath: CHROME,
+      args: ["--disable-blink-features=AutomationControlled"],
+    })
+  );
 
   const page = ctx.pages()[0] || (await ctx.newPage());
+  // Log in with the exact Qwen.exe desktop identity (UA + client hints).
+  await applyDesktopClientHints(page);
   await page.goto("https://chat.qwen.ai/", { waitUntil: "domcontentloaded", timeout: 60000 });
+  await refreshDesktopClientHints(page);
   console.log("[qwen-login] Please log in to your Qwen account in the opened Chrome window...");
 
   const deadline = Date.now() + 5 * 60 * 1000; // 5 minutes
@@ -91,14 +98,8 @@ function saveTokenToDb(token) {
       break;
     }
     try {
-      const rawToken = await page.evaluate(() => {
-        try {
-          return localStorage.getItem("token");
-        } catch {
-          return null;
-        }
-      });
-      const validToken = extractValidToken(rawToken);
+      const tokenState = await readQwenTokenFromPage(page);
+      const validToken = extractValidToken(tokenState?.token || null);
       if (validToken) {
         console.log(`[qwen-login] Login detected! Token length=${validToken.length}. Saving to database...`);
         saveTokenToDb(validToken);
